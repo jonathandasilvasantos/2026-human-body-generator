@@ -130,12 +130,20 @@ class RetargetEntry:
 
 
 class Animation:
-    """A loaded, retargeted animation clip."""
+    """A loaded, retargeted animation clip.
+
+    ``mirror`` applies a left-right X-axis mirror to the source before
+    retargeting. Set this to ``True`` for Mixamo / most DCC exports whose
+    +X is the character's left but whose LeftXxx joints are nonetheless
+    the ones intended for the character's left side (sign of the X axis
+    vs naming convention is the source of left-right swaps).
+    """
 
     def __init__(self, bvh: bvh_mod.BVHFile, bones, name_map: Optional[Dict[str, str]] = None,
-                 unit_scale: Optional[float] = None):
+                 unit_scale: Optional[float] = None, mirror: bool = True):
         self.bvh = bvh
         self.bones = bones
+        self.mirror = mirror
         if unit_scale is not None:
             bvh.unit_scale = unit_scale
         lookup = _make_lookup(name_map or MIXAMO_MAP)
@@ -156,6 +164,8 @@ class Animation:
                 continue
             bvh_dir = _bvh_rest_direction(bvh, i)
             our_dir = _our_rest_direction(bones, our_idx)
+            if self.mirror:
+                bvh_dir = bvh_dir * np.array([-1.0, 1.0, 1.0], dtype=np.float32)
             R_rest = _rotation_between(our_dir, bvh_dir)
             R_rest_inv = R_rest.T
             entries[our_idx] = RetargetEntry(bvh_joint=i, our_bone=our_idx,
@@ -218,6 +228,13 @@ class Animation:
             U, _, Vt = np.linalg.svd(R)
             R = (U @ Vt).astype(np.float32)
             # Retarget: R_ours = R_rest_inv * R_bvh * R_rest
+            if self.mirror:
+                # Mirror about X: reflect the BVH rotation so "Left" in the
+                # source drives the rig's left side and rotations preserve
+                # their visual direction. Reflection matrix M = diag(-1,1,1)
+                # is its own inverse, so R_mirrored = M @ R @ M.
+                M = np.diag([-1.0, 1.0, 1.0]).astype(np.float32)
+                R = M @ R @ M
             R_ours = entry.R_rest_inv @ R @ entry.R_rest
             pose[entry.our_bone] = bvh_mod.matrix_to_euler_xyz(R_ours)
 
@@ -228,7 +245,10 @@ class Animation:
         root_t = (1.0 - a) * t0 + a * t1
         # Subtract the first frame's root so the motion is origin-relative.
         t_zero = self._frame_translation(0, self.root_bvh_idx) * self.bvh.unit_scale
-        root_offset = tuple((root_t - t_zero).tolist())
+        root_t = root_t - t_zero
+        if self.mirror:
+            root_t = root_t * np.array([-1.0, 1.0, 1.0], dtype=np.float32)
+        root_offset = tuple(root_t.tolist())
         return pose, root_offset
 
 
