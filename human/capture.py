@@ -86,7 +86,7 @@ def capture(
     out_path="screenshot.png",
     seed=None,
     gender=None,
-    pose="walk_passing",     # "t_pose" | "walk_passing" | "walk_heel_strike"
+    pose="walk_passing",     # "t_pose" | "walk_passing" | "walk_heel_strike" | "bvh"
     width=1024,
     height=1024,
     yaw=0.0,
@@ -95,6 +95,8 @@ def capture(
     target=(0.0, 0.25, 0.0),
     bg=(0.09, 0.10, 0.13, 1.0),
     skin_color=(0.85, 0.68, 0.55),
+    bvh_path=None,
+    bvh_time=0.5,
 ):
     if seed is not None:
         random.seed(seed)
@@ -119,6 +121,13 @@ def capture(
         character.set_pose(p, root_offset=(0.0, root[1], 0.0))  # no forward translation
     elif pose == "walk_heel_strike":
         p, root = skeleton.walk_pose(character.bones, t=2.86, speed=2.2)  # ~phi=2*pi
+        character.set_pose(p, root_offset=(0.0, root[1], 0.0))
+    elif pose == "bvh":
+        from . import animation as anim_mod
+        if bvh_path is None:
+            raise ValueError("pose=bvh requires bvh_path")
+        anim = anim_mod.load(bvh_path, character.bones)
+        p, root = anim.sample(bvh_time)
         character.set_pose(p, root_offset=(0.0, root[1], 0.0))
     else:
         raise ValueError(f"unknown pose {pose}")
@@ -177,7 +186,11 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--gender", choices=["male", "female", "neutral"], default=None)
     ap.add_argument("--pose", default="walk_passing",
-                    choices=["t_pose", "walk_passing", "walk_heel_strike"])
+                    choices=["t_pose", "walk_passing", "walk_heel_strike", "bvh"])
+    ap.add_argument("--bvh", dest="bvh_path", default=None,
+                    help="Path to a BVH file (use with --pose bvh)")
+    ap.add_argument("--bvh-time", dest="bvh_time", type=float, default=0.5,
+                    help="Time in seconds into the BVH clip to sample (default 0.5)")
     ap.add_argument("--width", type=int, default=1024)
     ap.add_argument("--height", type=int, default=1024)
     ap.add_argument("--yaw", type=float, default=0.0)
@@ -194,6 +207,8 @@ def main():
         yaw=args.yaw,
         pitch=args.pitch,
         dist=args.dist,
+        bvh_path=args.bvh_path,
+        bvh_time=args.bvh_time,
     )
 
 

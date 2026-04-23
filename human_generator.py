@@ -31,12 +31,18 @@ Controls:
     Esc / Q           - quit
 """
 
+import argparse
+
 from human.viewer import Viewer
 
 
 def main():
     print(__doc__)
-    Viewer().run()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bvh", default=None,
+                    help="Path to a BVH animation file to play on startup")
+    args = ap.parse_args()
+    Viewer(bvh_path=args.bvh).run()
 
 
 if __name__ == "__main__":

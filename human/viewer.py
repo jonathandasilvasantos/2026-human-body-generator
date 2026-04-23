@@ -8,6 +8,7 @@ import numpy as np
 import glfw
 from OpenGL.GL import *
 
+from . import animation as anim_mod
 from . import mathx, renderer, skeleton
 from .character import Character, random_appearance
 
@@ -36,7 +37,7 @@ class Viewer:
     BG = (0.09, 0.10, 0.13, 1.0)
     BONE_COLOR = (1.0, 0.35, 0.2)
 
-    def __init__(self):
+    def __init__(self, bvh_path: str | None = None):
         self._init_glfw()
         self._init_gl()
 
@@ -49,9 +50,15 @@ class Viewer:
         self._drag_origin = None
         self._t_walk = 0.0
 
+        self.bvh_animation: anim_mod.Animation | None = None
+        self.bvh_path = bvh_path
+        self._t_anim = 0.0
+
         random.seed()
         self.character = Character()
         self._regenerate_all()
+        if bvh_path:
+            self._load_bvh(bvh_path)
 
     # ---- setup ------------------------------------------------------------
 
@@ -96,6 +103,17 @@ class Viewer:
         self.line_prog = renderer.LineProgram()
 
     # ---- regeneration -----------------------------------------------------
+
+    def _load_bvh(self, path: str):
+        try:
+            self.bvh_animation = anim_mod.load(path, self.character.bones)
+            self._t_anim = 0.0
+            self.walking = False
+            print(f"[bvh] loaded {path}: {self.bvh_animation.bvh.frames} frames, "
+                  f"{self.bvh_animation.duration:.2f}s, mapped {len(self.bvh_animation.entries)} bones")
+        except Exception as e:
+            print(f"[bvh] failed to load {path}: {e}")
+            self.bvh_animation = None
 
     def _regenerate_all(self, gender: str | None = None):
         shape = skeleton.random_shape(gender=gender)
@@ -159,6 +177,13 @@ class Viewer:
             )
         elif key == glfw.KEY_W:
             self.walking = not self.walking
+        elif key == glfw.KEY_A:
+            # Toggle between procedural walk and BVH playback (if a BVH is loaded)
+            if self.bvh_animation is not None:
+                self.bvh_animation = None
+                print("[bvh] disabled; use procedural walk (W)")
+            elif self.bvh_path:
+                self._load_bvh(self.bvh_path)
         elif key == glfw.KEY_B:
             self.show_bones = not self.show_bones
         elif key == glfw.KEY_LEFT_BRACKET:
@@ -169,6 +194,12 @@ class Viewer:
     # ---- per frame --------------------------------------------------------
 
     def _tick_animation(self, dt):
+        # BVH playback takes precedence when loaded.
+        if self.bvh_animation is not None:
+            self._t_anim += dt
+            pose, root = self.bvh_animation.sample(self._t_anim)
+            self.character.set_pose(pose, root_offset=root)
+            return
         if not self.walking:
             return
         self._t_walk += dt
