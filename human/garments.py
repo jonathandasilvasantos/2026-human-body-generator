@@ -74,11 +74,13 @@ def build_shoes(bones, style) -> SkinnedMesh:
     if style == "barefoot":
         return _empty_mesh()
     if style == "sneakers":
-        inflate = 0.018
-        length_scale = 1.08
-    else:  # boots
-        inflate = 0.024
-        length_scale = 1.15
+        # sneakers are low-cut: modest inflate, barely past the toe
+        inflate = 0.012
+        length_scale = 1.05
+    else:
+        # boots are bulkier and have a small shaft that hugs the ankle
+        inflate = 0.020
+        length_scale = 1.10
     return mesh_mod.build_selected(bones, ["foot_L", "foot_R"], inflate, length_scale)
 
 

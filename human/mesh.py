@@ -109,10 +109,11 @@ def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6,
 _GARMENT_CAP_SCALE = {
     # Torso bones: shallow TOP caps (so the shirt doesn't balloon over the
     # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
-    # no visible belt-seam).
+    # no visible belt-seam). Pelvis top cap is modest so the pants/shorts
+    # stop at hip level and the shirt clearly covers the midriff above.
     "chest":  (0.25, 0.90),
     "spine":  (0.30, 1.00),
-    "pelvis": (0.90, 0.50),
+    "pelvis": (0.40, 0.60),
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
     "foot_L": (0.90, 0.25),
     "foot_R": (0.90, 0.25),
@@ -575,15 +576,18 @@ def build_lips(bones) -> SkinnedMesh:
     y_mouth = length * H_MOUTH
     z = head_d * 0.88
     # upper lip: wider + slight dip
+    # Thin, mostly-flat lips pressed against the face plane. Keeping both
+    # the vertical half-extent (ry) small and the depth (rz) shallow so the
+    # lips read as a mouth line rather than two stacked domes.
     upper = prim.ellipsoid(
-        (0.0, y_mouth + length * 0.020, z),
-        (length * 0.10, length * 0.016, length * 0.025),
-        head_idx, parent, rings=6, radial=18,
+        (0.0, y_mouth + length * 0.012, z),
+        (length * 0.09, length * 0.008, length * 0.012),
+        head_idx, parent, rings=5, radial=18,
     )
     lower = prim.ellipsoid(
-        (0.0, y_mouth - length * 0.010, z),
-        (length * 0.095, length * 0.020, length * 0.028),
-        head_idx, parent, rings=6, radial=18,
+        (0.0, y_mouth - length * 0.006, z),
+        (length * 0.085, length * 0.010, length * 0.014),
+        head_idx, parent, rings=5, radial=18,
     )
     chunks = [upper, lower]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]

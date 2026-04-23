@@ -141,26 +141,24 @@ def build_facial_hair(bones, style: str) -> SkinnedMesh:
 
     chunks = []
 
-    # Mustache — two small patches just above the upper lip.
+    # Mustache — a single thin strip just above the upper lip.
     if style in ("mustache", "full"):
         z = head_d * 0.90
-        y = length * (H_MOUTH + 0.03)
-        half_sep = length * 0.028
-        mw, mh = length * 0.055, length * 0.012
-        chunks += [
-            prim.flat_patch((+half_sep, y, z), (mw, mh), head_idx, parent,
-                            normal=(0, 0, 1), subdiv=(6, 2), thickness=0.004),
-            prim.flat_patch((-half_sep, y, z), (mw, mh), head_idx, parent,
-                            normal=(0, 0, 1), subdiv=(6, 2), thickness=0.004),
-        ]
+        y = length * (H_MOUTH + 0.025)
+        chunks.append(prim.flat_patch(
+            (0.0, y, z),
+            (length * 0.075, length * 0.010),
+            head_idx, parent, normal=(0, 0, 1),
+            subdiv=(7, 2), thickness=0.002,
+        ))
 
-    # Soul patch / goatee — patch on and below the chin.
+    # Soul patch / goatee — small patch just below the lower lip.
     if style in ("goatee", "full"):
         chunks.append(prim.flat_patch(
-            (0.0, length * (H_CHIN + 0.06), head_d * 0.80),
-            (length * 0.045, length * 0.055),
+            (0.0, length * (H_CHIN + 0.08), head_d * 0.80),
+            (length * 0.040, length * 0.035),
             head_idx, parent, normal=(0, 0, 1),
-            subdiv=(6, 4), thickness=0.004,
+            subdiv=(4, 3), thickness=0.002,
         ))
 
     # Full beard / stubble — subtle patches on the jawline and chin.
