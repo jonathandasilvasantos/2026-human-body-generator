@@ -80,8 +80,12 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             y_cutoff=max(-1.3, y_cut),
         )]
     elif style == "long":
-        # Scalp cap + drape down to the shoulder area (still skinned to head).
+        # Scalp cap + drape flowing down past the shoulders. The drape's
+        # own ellipsoid is positioned BELOW the skull so it reads as hair
+        # falling naturally, not as a pointy cone standing on top.
         y_cut_top = (length * (H_MOUTH - 0.02) - scalp_cy) / scalp_ry
+        drape_cy = length * 0.05
+        drape_ry = length * 0.55  # not so tall: its top should sit below the crown
         chunks = [
             prim.hemisphere_cap(
                 (0.0, scalp_cy, -length * 0.01),
@@ -89,12 +93,12 @@ def build_hair(bones, style: str) -> SkinnedMesh:
                 head_idx, parent,
                 rings=10, radial=28, y_cutoff=max(-1.6, y_cut_top),
             ),
-            # trailing drape behind the head
+            # Lower drape behind and around the head.
             prim.hemisphere_cap(
-                (0.0, length * 0.05, -length * 0.06),
-                (scalp_rx * 1.10, length * 1.1, scalp_rz * 1.15),
+                (0.0, drape_cy, -length * 0.04),
+                (scalp_rx * 1.12, drape_ry, scalp_rz * 1.14),
                 head_idx, parent,
-                rings=10, radial=28, y_cutoff=-0.3,
+                rings=10, radial=28, y_cutoff=-0.6,
             ),
         ]
     else:

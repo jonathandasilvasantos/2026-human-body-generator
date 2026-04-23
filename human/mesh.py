@@ -117,6 +117,16 @@ _GARMENT_CAP_SCALE = {
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
     "foot_L": (0.90, 0.25),
     "foot_R": (0.90, 0.25),
+    # Forearm sleeve cuff: the PRE-ROTATION top cap is the one that extends
+    # past the wrist in world space (these bones point along -Y, so the
+    # capsule is mirrored by align_y_to). Shrinking the top cap stops the
+    # longsleeve at the wrist instead of swallowing the hand.
+    "farm_L": (0.25, 1.00),
+    "farm_R": (0.25, 1.00),
+    # Shin cuff: same reasoning. Shrink pre-rotation top cap so the
+    # trousers stop at the ankle and the shoe sits underneath cleanly.
+    "shin_L": (0.30, 1.00),
+    "shin_R": (0.30, 1.00),
 }
 
 
