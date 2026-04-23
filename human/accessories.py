@@ -163,33 +163,31 @@ def build_facial_hair(bones, style: str) -> SkinnedMesh:
             subdiv=(6, 4), thickness=0.004,
         ))
 
-    # Full beard / stubble — jawline + under-chin. Kept low on the face
-    # (between H_CHIN and H_MOUTH) so the patches don't read as random dots
-    # on the cheeks when viewed from a distance.
+    # Full beard / stubble — subtle patches on the jawline and chin.
+    # Small, thin, positioned well below the mouth so they read as
+    # shadow/stubble rather than a second pair of lips.
     if style in ("stubble", "full"):
-        jaw_y_lo = length * (H_CHIN + 0.05)    # near the chin line
-        jaw_y_hi = length * (H_CHIN + 0.15)    # just under the mouth corners
-        # Side jaw strips, smaller and rotated to follow the jaw front-back.
+        jaw_y  = length * (H_CHIN + 0.10)     # between chin and mouth
+        chin_y = length * (H_CHIN + 0.03)     # right at the chin line
         chunks += [
             prim.flat_patch(
-                (+head_w * 0.70, jaw_y_hi, head_d * 0.45),
-                (length * 0.045, length * 0.06),
-                head_idx, parent, normal=(0.4, 0.0, 0.9),
-                subdiv=(4, 3), thickness=0.003,
+                (+head_w * 0.55, jaw_y, head_d * 0.62),
+                (length * 0.035, length * 0.040),
+                head_idx, parent, normal=(0.3, -0.2, 0.95),
+                subdiv=(3, 3), thickness=0.0015,
             ),
             prim.flat_patch(
-                (-head_w * 0.70, jaw_y_hi, head_d * 0.45),
-                (length * 0.045, length * 0.06),
-                head_idx, parent, normal=(-0.4, 0.0, 0.9),
-                subdiv=(4, 3), thickness=0.003,
+                (-head_w * 0.55, jaw_y, head_d * 0.62),
+                (length * 0.035, length * 0.040),
+                head_idx, parent, normal=(-0.3, -0.2, 0.95),
+                subdiv=(3, 3), thickness=0.0015,
             ),
         ]
-        # Front chin/under-jaw patch.
         chunks.append(prim.flat_patch(
-            (0.0, jaw_y_lo, head_d * 0.78),
-            (length * 0.09, length * 0.045),
-            head_idx, parent, normal=(0, -0.15, 0.98),
-            subdiv=(6, 3), thickness=0.003,
+            (0.0, chin_y, head_d * 0.70),
+            (length * 0.055, length * 0.025),
+            head_idx, parent, normal=(0, -0.3, 0.95),
+            subdiv=(5, 2), thickness=0.0015,
         ))
 
     if not chunks:

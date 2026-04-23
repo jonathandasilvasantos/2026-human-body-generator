@@ -72,11 +72,13 @@ def _make_fbo(width, height):
     return fbo_ms, fbo_res
 
 
-def _camera_view(target=(0.0, 0.25, 0.0), dist=3.0, yaw=0.0, pitch=0.08):
+def _camera_view(target=(0.0, -0.25, 0.0), dist=3.0, yaw=0.0, pitch=0.06):
+    # Target sits a bit below the pelvis so both feet and head fit in a
+    # 55 deg vertical FOV; pitch is gentle so the face still reads.
     target = np.asarray(target, dtype=np.float32)
     eye = target + np.array([
         dist * math.cos(pitch) * math.sin(yaw),
-        dist * math.sin(pitch) + 0.25,
+        dist * math.sin(pitch) + 0.35,
         dist * math.cos(pitch) * math.cos(yaw),
     ], dtype=np.float32)
     return mathx.look_at(eye, target, [0, 1, 0])
@@ -90,9 +92,9 @@ def capture(
     width=1024,
     height=1024,
     yaw=0.0,
-    pitch=0.08,
+    pitch=0.06,
     dist=3.0,
-    target=(0.0, 0.25, 0.0),
+    target=(0.0, -0.25, 0.0),
     bg=(0.09, 0.10, 0.13, 1.0),
     bvh_path=None,
     bvh_time=0.5,

@@ -26,13 +26,15 @@ from .mesh import SkinnedMesh, _empty_mesh, _find
 # --- garment catalogs --------------------------------------------------------
 
 TOP_BONE_SETS = {
-    # Tops cover chest, spine, and shoulders. Pelvis is intentionally left
-    # to the bottom garment (pants/shorts/skirt) so the two don't z-fight
-    # over the hip region. The spine capsule extends down to y~0.08 which
-    # overlaps the pelvis capsule starting at y=0, closing the gap.
-    "tank":       ["chest", "spine", "clav_L", "clav_R"],
-    "tshirt":     ["chest", "spine", "clav_L", "clav_R", "uarm_L", "uarm_R"],
-    "longsleeve": ["chest", "spine", "clav_L", "clav_R",
+    # Tops cover chest, spine, shoulders AND pelvis. Pelvis inclusion
+    # ensures the shirt's capsule is as wide as the skin underneath, so
+    # no midriff skin shows between shirt bottom and the bottom garment.
+    # Depth ordering (Character.build_gpu draws top before bottom) lets
+    # the pants/skirt visually cap the shirt at the waistline.
+    "tank":       ["chest", "spine", "pelvis", "clav_L", "clav_R"],
+    "tshirt":     ["chest", "spine", "pelvis", "clav_L", "clav_R",
+                   "uarm_L", "uarm_R"],
+    "longsleeve": ["chest", "spine", "pelvis", "clav_L", "clav_R",
                    "uarm_L", "uarm_R", "farm_L", "farm_R"],
 }
 

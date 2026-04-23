@@ -31,8 +31,14 @@ class SkinnedMesh:
     indices:   np.ndarray   # (M,)   uint32
 
 
-def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6):
-    """Capsule along +Y from y=0 to y=length in bone-local space."""
+def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6,
+             top_cap_scale=1.0, bottom_cap_scale=1.0):
+    """Capsule along +Y from y=0 to y=length in bone-local space.
+
+    ``top_cap_scale`` / ``bottom_cap_scale`` shrink the hemisphere caps
+    vertically without affecting the cylinder radius, useful for the
+    chest (whose top should not balloon over the neck).
+    """
     verts, norms, b_a, b_b, w = [], [], [], [], []
 
     def add(p, n, wa):
@@ -48,7 +54,7 @@ def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6):
     # bottom hemisphere (y <= 0)
     for i in range(rings + 1):
         phi = (math.pi * 0.5) * (i / rings)
-        y = -math.sin(phi) * radius
+        y = -math.sin(phi) * radius * bottom_cap_scale
         rr = math.cos(phi) * radius
         wa = 0.0 if has_parent else 1.0
         for j in range(radial):
@@ -73,7 +79,7 @@ def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6):
     # top hemisphere
     for i in range(rings + 1):
         phi = (math.pi * 0.5) * (i / rings)
-        y = length + math.sin(phi) * radius
+        y = length + math.sin(phi) * radius * top_cap_scale
         rr = math.cos(phi) * radius
         for j in range(radial):
             th = (j / radial) * 2 * math.pi
@@ -100,6 +106,19 @@ def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6):
     )
 
 
+_GARMENT_CAP_SCALE = {
+    # Torso bones: shallow TOP caps (so the shirt doesn't balloon over the
+    # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
+    # no visible belt-seam).
+    "chest":  (0.25, 0.90),
+    "spine":  (0.30, 1.00),
+    "pelvis": (0.90, 0.50),
+    # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
+    "foot_L": (0.90, 0.25),
+    "foot_R": (0.90, 0.25),
+}
+
+
 def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> SkinnedMesh:
     """Build a capsule mesh that only covers the named bones.
 
@@ -122,7 +141,10 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         length = full_len * length_scale
         if length < 1e-5:
             continue
-        v, n, ba, bb, w, idx = _capsule(i, parent, length, r + radius_inflate)
+        top_scale, bot_scale = _GARMENT_CAP_SCALE.get(name, (1.0, 1.0))
+        v, n, ba, bb, w, idx = _capsule(i, parent, length, r + radius_inflate,
+                                         top_cap_scale=top_scale,
+                                         bottom_cap_scale=bot_scale)
         R = mathx.align_y_to(tip_vec)
         v = v @ R.T
         n = n @ R.T
@@ -130,6 +152,26 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         chunks_ba.append(ba); chunks_bb.append(bb); chunks_w.append(w)
         chunks_i.append(idx + offset)
         offset += v.shape[0]
+
+    # If this garment covers the upper arms, stamp a matching shoulder
+    # bulge on each so it wraps the skin's deltoid without a gap.
+    for name, u_idx in (("uarm_L", _find(bones, "uarm_L")),
+                        ("uarm_R", _find(bones, "uarm_R"))):
+        if name in wanted and u_idx >= 0:
+            _, u_parent, _, u_tip, u_r = bones[u_idx]
+            u_tip = np.asarray(u_tip, dtype=np.float32)
+            R = mathx.align_y_to(u_tip)
+            r_sh = (u_r + radius_inflate) * 1.45
+            v, n, ba, bb, w, idx = prim.ellipsoid(
+                (0.0, 0.0, 0.0),
+                (r_sh * 1.05, r_sh * 0.95, r_sh),
+                u_idx, u_parent, weight_self=0.75,
+                rings=10, radial=14,
+            )
+            chunks_v.append(v @ R.T); chunks_n.append(n @ R.T)
+            chunks_ba.append(ba); chunks_bb.append(bb); chunks_w.append(w)
+            chunks_i.append(idx + offset)
+            offset += v.shape[0]
 
     if not chunks_v:
         empty_f32 = np.zeros((0, 3), dtype=np.float32)
@@ -165,7 +207,22 @@ def build(bones, shape=None) -> SkinnedMesh:
         length = float(np.linalg.norm(tip_vec))
         if length < 1e-5:
             continue
-        v, n, ba, bb, w, idx = _capsule(i, parent, length, r)
+        # Torso bones need shallow top/bottom caps so the chest doesn't
+        # balloon over the neck and the pelvis doesn't bulge under the
+        # thighs. Limbs keep the default rounded caps.
+        if name == "chest":
+            top_scale, bot_scale = 0.25, 0.40
+        elif name == "spine":
+            top_scale, bot_scale = 0.30, 0.40
+        elif name == "pelvis":
+            top_scale, bot_scale = 0.50, 0.40
+        elif name in ("foot_L", "foot_R"):
+            top_scale, bot_scale = 0.90, 0.25
+        else:
+            top_scale, bot_scale = 1.0, 1.0
+        v, n, ba, bb, w, idx = _capsule(i, parent, length, r,
+                                         top_cap_scale=top_scale,
+                                         bottom_cap_scale=bot_scale)
         R = mathx.align_y_to(tip_vec)
         v = v @ R.T
         n = n @ R.T
@@ -178,7 +235,8 @@ def build(bones, shape=None) -> SkinnedMesh:
         chunks.extend(_hand_compound(h_idx, parent, np.asarray(tip, np.float32), r, side))
 
     # Deltoid bulges at each shoulder (rounds the silhouette and avoids the
-    # visible wedge between the chest and upper-arm capsules).
+    # visible wedge between the chest and upper-arm capsules). Slightly
+    # smaller than before so garments with standard inflate still cover it.
     for uarm_name in ("uarm_L", "uarm_R"):
         u_idx = _find(bones, uarm_name)
         if u_idx < 0:
@@ -186,10 +244,7 @@ def build(bones, shape=None) -> SkinnedMesh:
         _, u_parent, _, u_tip, u_r = bones[u_idx]
         u_tip = np.asarray(u_tip, dtype=np.float32)
         R = mathx.align_y_to(u_tip)
-        # Placed at the bone's head (shoulder joint) in pre-rotation, with a
-        # larger radius than the arm itself; weighted to upper arm with some
-        # blend to clav for smoothness.
-        r_shoulder = u_r * 1.8
+        r_shoulder = u_r * 1.45
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, 0.0, 0.0),
             (r_shoulder * 1.05, r_shoulder * 0.95, r_shoulder),
