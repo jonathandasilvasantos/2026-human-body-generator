@@ -1,0 +1,13 @@
+env/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+screenshot.png
+iter*.png
+scr*.png
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.swp
