@@ -6,6 +6,8 @@ __pycache__/
 screenshot.png
 iter*.png
 scr*.png
+anim_*.png
+screenshot_*.png
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
