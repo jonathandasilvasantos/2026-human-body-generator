@@ -33,29 +33,29 @@ Bone = Tuple[str, int, Tuple[float, float, float], Tuple[float, float, float], f
 #   - upper arm ~1.4 heads, forearm ~1.2 heads, hand ~0.75 heads
 #   - thigh ~2.0 heads, shin ~1.9 heads, foot length ~0.85 heads
 BONES_BASE: List[Bone] = [
-    ("pelvis",   -1, (0.0, 0.0, 0.0),    (0.0, 0.10, 0.0),   0.15),
-    ("spine",     0, (0.0, 0.08, 0.0),   (0.0, 0.18, 0.0),   0.13),
-    ("chest",     1, (0.0, 0.18, 0.0),   (0.0, 0.20, 0.0),   0.16),
-    ("neck",      2, (0.0, 0.20, 0.0),   (0.0, 0.08, 0.0),   0.055),
-    ("head",      3, (0.0, 0.08, 0.0),   (0.0, 0.22, 0.0),   0.11),
+    ("pelvis",   -1, (0.0, 0.0, 0.0),    (0.0, 0.10, 0.0),   0.14),
+    ("spine",     0, (0.0, 0.08, 0.0),   (0.0, 0.18, 0.0),   0.12),
+    ("chest",     1, (0.0, 0.18, 0.0),   (0.0, 0.20, 0.0),   0.145),
+    ("neck",      2, (0.0, 0.19, 0.0),   (0.0, 0.06, 0.0),   0.042),
+    ("head",      3, (0.0, 0.06, 0.0),   (0.0, 0.215, 0.0),  0.102),
 
-    ("clav_L",    2, (0.04, 0.16, 0.0),  (0.15, 0.0, 0.0),   0.05),
-    ("uarm_L",    5, (0.15, 0.0, 0.0),   (0.0, -0.30, 0.0),  0.055),
-    ("farm_L",    6, (0.0, -0.30, 0.0),  (0.0, -0.26, 0.0),  0.047),
-    ("hand_L",    7, (0.0, -0.26, 0.0),  (0.0, -0.17, 0.0),  0.04),
+    ("clav_L",    2, (0.035, 0.15, 0.0), (0.125, 0.0, 0.0),  0.042),
+    ("uarm_L",    5, (0.125, 0.0, 0.0),  (0.0, -0.29, 0.0),  0.050),
+    ("farm_L",    6, (0.0, -0.29, 0.0),  (0.0, -0.255, 0.0), 0.043),
+    ("hand_L",    7, (0.0, -0.255, 0.0), (0.0, -0.155, 0.0), 0.036),
 
-    ("clav_R",    2, (-0.04, 0.16, 0.0), (-0.15, 0.0, 0.0),  0.05),
-    ("uarm_R",    9, (-0.15, 0.0, 0.0),  (0.0, -0.30, 0.0),  0.055),
-    ("farm_R",   10, (0.0, -0.30, 0.0),  (0.0, -0.26, 0.0),  0.047),
-    ("hand_R",   11, (0.0, -0.26, 0.0),  (0.0, -0.17, 0.0),  0.04),
+    ("clav_R",    2, (-0.035, 0.15, 0.0),(-0.125, 0.0, 0.0), 0.042),
+    ("uarm_R",    9, (-0.125, 0.0, 0.0), (0.0, -0.29, 0.0),  0.050),
+    ("farm_R",   10, (0.0, -0.29, 0.0),  (0.0, -0.255, 0.0), 0.043),
+    ("hand_R",   11, (0.0, -0.255, 0.0), (0.0, -0.155, 0.0), 0.036),
 
-    ("thigh_L",   0, (0.09, -0.02, 0.0), (0.0, -0.44, 0.0),  0.095),
-    ("shin_L",   13, (0.0, -0.44, 0.0),  (0.0, -0.42, 0.0),  0.07),
-    ("foot_L",   14, (0.0, -0.42, 0.0),  (0.0, -0.05, 0.19), 0.05),
+    ("thigh_L",   0, (0.085, -0.02, 0.0),(0.0, -0.44, 0.0),  0.088),
+    ("shin_L",   13, (0.0, -0.44, 0.0),  (0.0, -0.42, 0.0),  0.064),
+    ("foot_L",   14, (0.0, -0.42, 0.0),  (0.0, -0.05, 0.18), 0.047),
 
-    ("thigh_R",   0, (-0.09, -0.02, 0.0),(0.0, -0.44, 0.0),  0.095),
-    ("shin_R",   16, (0.0, -0.44, 0.0),  (0.0, -0.42, 0.0),  0.07),
-    ("foot_R",   17, (0.0, -0.42, 0.0),  (0.0, -0.05, 0.19), 0.05),
+    ("thigh_R",   0, (-0.085, -0.02, 0.0),(0.0, -0.44, 0.0), 0.088),
+    ("shin_R",   16, (0.0, -0.44, 0.0),  (0.0, -0.42, 0.0),  0.064),
+    ("foot_R",   17, (0.0, -0.42, 0.0),  (0.0, -0.05, 0.18), 0.047),
 ]
 
 
@@ -426,38 +426,38 @@ def random_shape(gender: str | None = None) -> Shape:
         gender = random.choice(["male", "female"])
 
     if gender == "male":
-        shoulder_w = random.uniform(1.00, 1.25)
-        hip_w      = random.uniform(0.82, 1.00)
+        shoulder_w = random.uniform(0.98, 1.14)
+        hip_w      = random.uniform(0.88, 1.02)
         bust       = 0.0
-        height     = random.uniform(0.98, 1.14)
-        bulk       = random.uniform(0.95, 1.35)
-        torso_len  = random.uniform(0.95, 1.10)
-        leg_len    = random.uniform(0.95, 1.12)
-        head_size  = random.uniform(1.10, 1.25)
+        height     = random.uniform(0.98, 1.12)
+        bulk       = random.uniform(0.94, 1.20)
+        torso_len  = random.uniform(0.96, 1.08)
+        leg_len    = random.uniform(0.96, 1.10)
+        head_size  = random.uniform(1.00, 1.10)
     elif gender == "female":
-        shoulder_w = random.uniform(0.78, 0.98)
-        hip_w      = random.uniform(1.00, 1.22)
-        bust       = random.uniform(0.45, 1.30)
-        height     = random.uniform(0.88, 1.04)
-        bulk       = random.uniform(0.78, 1.10)
-        torso_len  = random.uniform(0.92, 1.08)
-        leg_len    = random.uniform(0.92, 1.12)
-        head_size  = random.uniform(1.05, 1.20)
+        shoulder_w = random.uniform(0.84, 0.98)
+        hip_w      = random.uniform(0.98, 1.16)
+        bust       = random.uniform(0.30, 0.95)
+        height     = random.uniform(0.90, 1.04)
+        bulk       = random.uniform(0.80, 1.02)
+        torso_len  = random.uniform(0.94, 1.06)
+        leg_len    = random.uniform(0.94, 1.10)
+        head_size  = random.uniform(0.98, 1.08)
     else:
-        shoulder_w = random.uniform(0.88, 1.15)
-        hip_w      = random.uniform(0.90, 1.15)
+        shoulder_w = random.uniform(0.90, 1.08)
+        hip_w      = random.uniform(0.92, 1.10)
         bust       = 0.0
-        height     = random.uniform(0.92, 1.10)
-        bulk       = random.uniform(0.85, 1.20)
-        torso_len  = random.uniform(0.92, 1.08)
-        leg_len    = random.uniform(0.92, 1.12)
-        head_size  = random.uniform(1.05, 1.20)
+        height     = random.uniform(0.94, 1.08)
+        bulk       = random.uniform(0.86, 1.10)
+        torso_len  = random.uniform(0.94, 1.08)
+        leg_len    = random.uniform(0.94, 1.10)
+        head_size  = random.uniform(0.98, 1.10)
 
     return Shape(
         gender=gender,
         height=height,
         bulk=bulk,
-        limb_len=random.uniform(0.92, 1.10),
+        limb_len=random.uniform(0.95, 1.08),
         shoulder_w=shoulder_w,
         hip_w=hip_w,
         bust=bust,

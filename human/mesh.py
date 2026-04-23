@@ -111,9 +111,9 @@ _GARMENT_CAP_SCALE = {
     # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
     # no visible belt-seam). Pelvis top cap is modest so the pants/shorts
     # stop at hip level and the shirt clearly covers the midriff above.
-    "chest":  (0.25, 0.90),
-    "spine":  (0.30, 1.00),
-    "pelvis": (0.40, 0.60),
+    "chest":  (0.18, 0.78),
+    "spine":  (0.22, 0.82),
+    "pelvis": (0.28, 0.52),
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
     "foot_L": (0.90, 0.25),
     "foot_R": (0.90, 0.25),
@@ -172,7 +172,7 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
             _, u_parent, _, u_tip, u_r = bones[u_idx]
             u_tip = np.asarray(u_tip, dtype=np.float32)
             R = mathx.align_y_to(u_tip)
-            r_sh = (u_r + radius_inflate) * 1.45
+            r_sh = (u_r + radius_inflate) * 1.08
             v, n, ba, bb, w, idx = prim.ellipsoid(
                 (0.0, 0.0, 0.0),
                 (r_sh * 1.05, r_sh * 0.95, r_sh),
@@ -222,11 +222,11 @@ def build(bones, shape=None) -> SkinnedMesh:
         # balloon over the neck and the pelvis doesn't bulge under the
         # thighs. Limbs keep the default rounded caps.
         if name == "chest":
-            top_scale, bot_scale = 0.25, 0.40
+            top_scale, bot_scale = 0.16, 0.30
         elif name == "spine":
-            top_scale, bot_scale = 0.30, 0.40
+            top_scale, bot_scale = 0.20, 0.30
         elif name == "pelvis":
-            top_scale, bot_scale = 0.50, 0.40
+            top_scale, bot_scale = 0.32, 0.32
         elif name in ("foot_L", "foot_R"):
             top_scale, bot_scale = 0.90, 0.25
         else:
@@ -255,7 +255,7 @@ def build(bones, shape=None) -> SkinnedMesh:
         _, u_parent, _, u_tip, u_r = bones[u_idx]
         u_tip = np.asarray(u_tip, dtype=np.float32)
         R = mathx.align_y_to(u_tip)
-        r_shoulder = u_r * 1.45
+        r_shoulder = u_r * 1.10
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, 0.0, 0.0),
             (r_shoulder * 1.05, r_shoulder * 0.95, r_shoulder),
@@ -406,7 +406,7 @@ def _bust(chest_idx, chest_bone, amount):
 # --- hands -------------------------------------------------------------------
 
 def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
-    """Palm + thumb + 4 fingers, all rigidly skinned to the hand bone.
+    """Palm + thumb + fused finger block, all rigidly skinned to the hand bone.
 
     Built in the bone's pre-rotation frame (+Y along tip direction). The
     ``side`` argument is +1 for the left hand, -1 for the right so the thumb
@@ -421,11 +421,10 @@ def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
         return []
     R = mathx.align_y_to(tip)
 
-    palm_len   = length * 0.55
-    finger_len = length * 0.48
-    hand_w     = radius * 1.35    # palm width across knuckles
-    palm_t     = radius * 0.50    # palm thickness (front to back)
-    finger_r   = radius * 0.26
+    palm_len   = length * 0.62
+    hand_w     = radius * 1.05
+    palm_t     = radius * 0.44
+    finger_r   = radius * 0.16
 
     # The hand bone's tip points along -Y (it hangs from the wrist), so
     # ``align_y_to`` produces R = diag(1, -1, -1) -- it flips Y and Z from
@@ -448,27 +447,17 @@ def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
         # Pre-R Z is NEGATIVE so after flip it lands at +Z (palm front).
         prim.ellipsoid(
             (-hand_w * 0.85 * side, palm_len * 0.45, -palm_t * 0.35),
-            (finger_r * 1.1, length * 0.12, finger_r * 1.1),
+            (finger_r * 1.0, length * 0.11, finger_r),
             hand_idx, parent_idx, rings=8, radial=10,
         ),
     ]
 
-    # Four fingers evenly spaced across the palm top. Small per-finger
-    # length variation (middle longest, pinky shortest) for a more natural
-    # silhouette. Slight forward (+Z) cup, via pre-R negative Z.
-    finger_scales = (0.85, 1.00, 0.96, 0.78)  # index, middle, ring, pinky
-    for i in range(4):
-        t = i / 3.0
-        x = (-hand_w * 0.55 + t * hand_w * 1.10) * side
-        fl = finger_len * finger_scales[i]
-        y_center = palm_len + fl * 0.5
-        z_center = -palm_t * 0.15   # flips to +0.15*palm_t after R
-        chunks.append(prim.ellipsoid(
-            (x, y_center, z_center),
-            (finger_r, fl * 0.5, finger_r),
-            hand_idx, parent_idx,
-            rings=8, radial=10,
-        ))
+    chunks.append(prim.ellipsoid(
+        (0.0, palm_len + length * 0.09, -palm_t * 0.06),
+        (hand_w * 0.72, length * 0.11, finger_r),
+        hand_idx, parent_idx,
+        rings=8, radial=12,
+    ))
 
     return [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
 

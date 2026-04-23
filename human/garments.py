@@ -26,15 +26,13 @@ from .mesh import SkinnedMesh, _empty_mesh, _find
 # --- garment catalogs --------------------------------------------------------
 
 TOP_BONE_SETS = {
-    # Tops cover chest, spine, shoulders AND pelvis. Pelvis inclusion
-    # ensures the shirt's capsule is as wide as the skin underneath, so
-    # no midriff skin shows between shirt bottom and the bottom garment.
-    # Depth ordering (Character.build_gpu draws top before bottom) lets
-    # the pants/skirt visually cap the shirt at the waistline.
-    "tank":       ["chest", "spine", "pelvis", "clav_L", "clav_R"],
-    "tshirt":     ["chest", "spine", "pelvis", "clav_L", "clav_R",
+    # Tops stop at the natural waist instead of wrapping the whole pelvis.
+    # That keeps the torso from becoming a single block while bottoms still
+    # overlap enough to hide seams in motion.
+    "tank":       ["chest", "spine", "clav_L", "clav_R"],
+    "tshirt":     ["chest", "spine", "clav_L", "clav_R",
                    "uarm_L", "uarm_R"],
-    "longsleeve": ["chest", "spine", "pelvis", "clav_L", "clav_R",
+    "longsleeve": ["chest", "spine", "clav_L", "clav_R",
                    "uarm_L", "uarm_R", "farm_L", "farm_R"],
 }
 
@@ -75,12 +73,12 @@ def build_shoes(bones, style) -> SkinnedMesh:
         return _empty_mesh()
     if style == "sneakers":
         # sneakers are low-cut: modest inflate, barely past the toe
-        inflate = 0.012
-        length_scale = 1.05
+        inflate = 0.010
+        length_scale = 1.03
     else:
         # boots are bulkier and have a small shaft that hugs the ankle
-        inflate = 0.020
-        length_scale = 1.10
+        inflate = 0.016
+        length_scale = 1.07
     return mesh_mod.build_selected(bones, ["foot_L", "foot_R"], inflate, length_scale)
 
 
@@ -103,13 +101,13 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
 
     # Cone top: hug the hips. Slightly wider than pelvis but narrow enough
     # that the arms (at ~pelvis_r + 0.04 from centre) hang outside.
-    top_radius = pelvis_r * 1.02
+    top_radius = pelvis_r * 0.92
     # Cone bottom: length_frac * thigh length below the hip
     thigh_len = float(np.linalg.norm(np.asarray(thigh_tip, dtype=np.float32)))
     total_drop = (float(np.asarray(pelvis_tip)[1]) * -1.0  # pelvis height component
                   if False else 0.0) + thigh_len * length_frac
     bottom_radius = top_radius * flare
-    top_center = (0.0, 0.02, 0.0)  # slight offset above pelvis head joint
+    top_center = (0.0, 0.01, 0.0)
 
     chunks = [prim.cone_shell(
         top_center, top_radius,
@@ -126,17 +124,46 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
 # --- dress -------------------------------------------------------------------
 
 def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
-    """Dress = upper shell (chest/spine/pelvis/clavs) + cone skirt from
-    pelvis. ``pelvis`` is included in the upper so there's no visible skin
-    band at the waist between the spine capsule and the skirt cone.
+    """Dress = tight upper (chest + shoulders) + flared cone starting at
+    the natural waist. The cone begins at spine-head level (not above
+    pelvis) with a radius matched to the spine capsule, so the waist
+    transition is width-continuous instead of showing a belt-like seam.
     """
+    # Upper tight piece over the ribcage, no pelvis (the cone owns it).
     upper = mesh_mod.build_selected(
         bones,
-        ["chest", "spine", "pelvis", "clav_L", "clav_R"],
-        radius_inflate=0.025,
-        length_scale=1.0,
+        ["chest", "spine", "clav_L", "clav_R"],
+        radius_inflate=0.018,
+        length_scale=0.94,
     )
-    lower = build_skirt(bones, length_frac=length_frac, flare=flare)
+    # Custom cone: top at waist (y = spine head ~0.08), matching spine
+    # capsule radius so the two surfaces meet flush. Flares to hem.
+    pelvis_idx = mesh_mod._find(bones, "pelvis")
+    thigh_idx = mesh_mod._find(bones, "thigh_L")
+    if pelvis_idx < 0 or thigh_idx < 0:
+        return upper
+    pelvis_r = bones[pelvis_idx][4]
+    thigh_tip = bones[thigh_idx][3]
+    thigh_len = float(np.linalg.norm(np.asarray(thigh_tip, dtype=np.float32)))
+
+    waist_y = 0.08           # spine-head level in pelvis-local frame
+    waist_r = pelvis_r * 0.94   # matches the slimmer upper shell better and
+                                # inflate, so the cone's top ring lines up
+                                # with the capsule silhouette (no seam)
+    hem_drop = 0.10 + thigh_len * length_frac
+    hem_r = waist_r * flare
+
+    cone = prim.cone_shell(
+        (0.0, waist_y, 0.0), waist_r,
+        height=hem_drop, bottom_radius=hem_r,
+        bone_index=pelvis_idx, parent_index=-1,
+        rings=10, radial=28,
+    )
+    lower_parts = [cone]
+    lower_v, lower_n, lower_ba, lower_bb, lower_w, lower_idx = prim.merge(lower_parts)
+    lower = SkinnedMesh(lower_v, lower_n,
+                        np.stack([lower_ba, lower_bb], axis=1).astype(np.int32),
+                        lower_w, lower_idx)
     if upper.indices.size == 0 and lower.indices.size == 0:
         return _empty_mesh()
 
