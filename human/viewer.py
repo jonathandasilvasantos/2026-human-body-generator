@@ -14,7 +14,7 @@ from .character import Character, random_appearance
 
 
 class OrbitCamera:
-    def __init__(self, target=(0.0, 0.25, 0.0), dist=3.0):
+    def __init__(self, target=(0.0, 0.18, 0.0), dist=2.7):
         self.target = np.asarray(target, dtype=np.float32)
         self.dist = dist
         # Character faces +Z; camera sits on +Z looking toward -Z so the

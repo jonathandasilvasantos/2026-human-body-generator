@@ -29,10 +29,10 @@ TOP_BONE_SETS = {
     # Tops stop at the natural waist instead of wrapping the whole pelvis.
     # That keeps the torso from becoming a single block while bottoms still
     # overlap enough to hide seams in motion.
-    "tank":       ["chest", "spine", "clav_L", "clav_R"],
-    "tshirt":     ["chest", "spine", "clav_L", "clav_R",
+    "tank":       ["chest", "spine", "pelvis", "clav_L", "clav_R"],
+    "tshirt":     ["chest", "spine", "pelvis", "clav_L", "clav_R",
                    "uarm_L", "uarm_R"],
-    "longsleeve": ["chest", "spine", "clav_L", "clav_R",
+    "longsleeve": ["chest", "spine", "pelvis", "clav_L", "clav_R",
                    "uarm_L", "uarm_R", "farm_L", "farm_R"],
 }
 
@@ -129,12 +129,13 @@ def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
     pelvis) with a radius matched to the spine capsule, so the waist
     transition is width-continuous instead of showing a belt-like seam.
     """
-    # Upper tight piece over the ribcage, no pelvis (the cone owns it).
+    # Upper tight piece includes the pelvis so the dress reads as one
+    # continuous garment even when the cone shell intersects at the waist.
     upper = mesh_mod.build_selected(
         bones,
-        ["chest", "spine", "clav_L", "clav_R"],
-        radius_inflate=0.018,
-        length_scale=0.94,
+        ["chest", "spine", "pelvis", "clav_L", "clav_R"],
+        radius_inflate=0.014,
+        length_scale=0.98,
     )
     # Custom cone: top at waist (y = spine head ~0.08), matching spine
     # capsule radius so the two surfaces meet flush. Flares to hem.
@@ -146,8 +147,8 @@ def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
     thigh_tip = bones[thigh_idx][3]
     thigh_len = float(np.linalg.norm(np.asarray(thigh_tip, dtype=np.float32)))
 
-    waist_y = 0.08           # spine-head level in pelvis-local frame
-    waist_r = pelvis_r * 0.94   # matches the slimmer upper shell better and
+    waist_y = 0.03           # overlap the upper shell so the dress reads as one piece
+    waist_r = pelvis_r * 0.98   # matches the slimmer upper shell better and
                                 # inflate, so the cone's top ring lines up
                                 # with the capsule silhouette (no seam)
     hem_drop = 0.10 + thigh_len * length_frac
