@@ -25,11 +25,6 @@ from .mesh import SkinnedMesh, _empty_mesh, _find
 
 # --- garment catalogs --------------------------------------------------------
 
-TOP_STYLES    = ("tshirt", "longsleeve", "tank", "dress")
-BOTTOM_STYLES = ("pants", "shorts", "skirt", "none")
-SHOE_STYLES   = ("barefoot", "sneakers", "boots")
-
-
 TOP_BONE_SETS = {
     # Tops cover chest, spine, and shoulders. Pelvis is intentionally left
     # to the bottom garment (pants/shorts/skirt) so the two don't z-fight

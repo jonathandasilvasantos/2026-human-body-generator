@@ -20,10 +20,6 @@ from .mesh import (
 )
 
 
-HAIR_STYLES = ("bald", "short", "medium", "long", "buzz")
-FACIAL_HAIR_STYLES = ("none", "stubble", "mustache", "goatee", "full")
-
-
 def _finish(chunks, R):
     """Apply the head's rest rotation ``R`` and merge chunks into a
     SkinnedMesh."""

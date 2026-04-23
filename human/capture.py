@@ -94,7 +94,6 @@ def capture(
     dist=3.0,
     target=(0.0, 0.25, 0.0),
     bg=(0.09, 0.10, 0.13, 1.0),
-    skin_color=(0.85, 0.68, 0.55),
     bvh_path=None,
     bvh_time=0.5,
 ):
