@@ -12,6 +12,28 @@ shading — is generated procedurally at startup.
 
 ---
 
+## Gallery
+
+Every character below is generated procedurally from a random seed. No
+modelled meshes, no textures — each pixel is driven by the parametric
+pipeline.
+
+|  |  |
+|---|---|
+| ![](screenshots/01_female_dress_long_hair.png)  | ![](screenshots/02_male_longsleeve_pants.png) |
+| ![](screenshots/03_female_dress_medium_hair.png) | ![](screenshots/04_male_bald_fullbeard.png) |
+| ![](screenshots/05_male_buzz_shorts.png)        | ![](screenshots/06_male_tank.png) |
+
+### Walk cycle — BVH retargeting
+
+Four frames sampled evenly across `animations/walk2.bvh` (a Mixamo walk),
+retargeted onto two different procedurally-generated characters:
+
+![male walk cycle](screenshots/07_walk_cycle_male.png)
+![female walk cycle](screenshots/08_walk_cycle_female.png)
+
+---
+
 ## Features
 
 ### Parametric body
