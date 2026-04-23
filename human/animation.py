@@ -132,15 +132,27 @@ class RetargetEntry:
 class Animation:
     """A loaded, retargeted animation clip.
 
-    ``mirror`` applies a left-right X-axis mirror to the source before
-    retargeting. Set this to ``True`` for Mixamo / most DCC exports whose
-    +X is the character's left but whose LeftXxx joints are nonetheless
-    the ones intended for the character's left side (sign of the X axis
-    vs naming convention is the source of left-right swaps).
+    Retargeting strategy (direction-matching):
+      - Each mapped bone has a rest-direction in our rig (d_our) and a
+        rest-direction in the source (d_src).
+      - Let T = rotation taking d_our to d_src (pre-rotation in our local
+        frame that aligns us with the source).
+      - The source's local rotation R_src, applied in the source's local
+        frame, takes d_src -> R_src @ d_src. To produce the same world
+        direction for our bone, we apply R_ours = R_src @ T, because then
+        R_ours @ d_our = R_src @ T @ d_our = R_src @ d_src.
+      - This matches the bone's forward direction exactly. Twist around
+        the bone axis is NOT preserved (would need an extra roll); for
+        limb retargeting the visual result is usually correct.
+
+    ``mirror`` reflects the source across the YZ plane before retargeting
+    (used only when the source was authored with +X = character's right,
+    whereas our rig has +X = character's left). Default is False for
+    Mixamo, whose axis convention matches ours.
     """
 
     def __init__(self, bvh: bvh_mod.BVHFile, bones, name_map: Optional[Dict[str, str]] = None,
-                 unit_scale: Optional[float] = None, mirror: bool = True):
+                 unit_scale: Optional[float] = None, mirror: bool = False):
         self.bvh = bvh
         self.bones = bones
         self.mirror = mirror
@@ -202,11 +214,27 @@ class Animation:
                 out[axis_map[ch]] = float(row[joint.channel_offset + c_idx])
         return out
 
+    def _bvh_world_rotation(self, frame: int, j_idx: int, cache: dict) -> np.ndarray:
+        if j_idx in cache:
+            return cache[j_idx]
+        parent = self.bvh.joints[j_idx].parent
+        parent_R = np.eye(3, dtype=np.float32) if parent < 0 else \
+                   self._bvh_world_rotation(frame, parent, cache)
+        R_local = self._frame_rotation(frame, j_idx)
+        R_world = (parent_R @ R_local).astype(np.float32)
+        cache[j_idx] = R_world
+        return R_world
+
     def sample(self, t: float) -> Tuple[List[Tuple[float, float, float]], Tuple[float, float, float]]:
         """Return ``(pose_rot, root_offset)`` at time ``t`` (seconds), looping.
 
-        ``pose_rot`` is a list of per-bone Euler triples in our rig's convention.
-        ``root_offset`` is the root (pelvis) translation in meters.
+        Retargets via world-rotation matching: walks both hierarchies in
+        parallel. For each mapped bone, computes the source's accumulated
+        world rotation, multiplies by the per-bone rest alignment to get
+        our bone's target world rotation, then solves for the local
+        rotation by dividing out our own parent's world rotation. This
+        preserves the twist along the chain, which a direction-only
+        retarget cannot do.
         """
         n = self.bvh.frames
         ft = max(self.bvh.frame_time, 1e-6)
@@ -216,27 +244,29 @@ class Animation:
         a = frac - math.floor(frac)
 
         pose = [(0.0, 0.0, 0.0)] * len(self.bones)
+        cache0: dict = {}
+        cache1: dict = {}
+        our_world: List[np.ndarray] = [np.eye(3, dtype=np.float32) for _ in self.bones]
+        entry_by_our_bone = {e.our_bone: e for e in self.entries}
+        M = np.diag([-1.0, 1.0, 1.0]).astype(np.float32) if self.mirror else None
 
-        for entry in self.entries:
-            R0 = self._frame_rotation(f0, entry.bvh_joint)
-            R1 = self._frame_rotation(f1, entry.bvh_joint)
-            # Linear blend of matrices then re-orthonormalise via SVD is
-            # expensive; for the sub-frame blend we just interpolate by
-            # mixing angles afterwards. Here we use a simple matrix lerp
-            # and re-orthonormalise with a cheap SVD.
-            R = (1.0 - a) * R0 + a * R1
-            U, _, Vt = np.linalg.svd(R)
-            R = (U @ Vt).astype(np.float32)
-            # Retarget: R_ours = R_rest_inv * R_bvh * R_rest
-            if self.mirror:
-                # Mirror about X: reflect the BVH rotation so "Left" in the
-                # source drives the rig's left side and rotations preserve
-                # their visual direction. Reflection matrix M = diag(-1,1,1)
-                # is its own inverse, so R_mirrored = M @ R @ M.
-                M = np.diag([-1.0, 1.0, 1.0]).astype(np.float32)
-                R = M @ R @ M
-            R_ours = entry.R_rest_inv @ R @ entry.R_rest
-            pose[entry.our_bone] = bvh_mod.matrix_to_euler_xyz(R_ours)
+        for i, (_, parent, _, _, _) in enumerate(self.bones):
+            parent_world = our_world[parent] if parent >= 0 else np.eye(3, dtype=np.float32)
+            entry = entry_by_our_bone.get(i)
+            if entry is None:
+                our_world[i] = parent_world
+                continue
+            R0 = self._bvh_world_rotation(f0, entry.bvh_joint, cache0)
+            R1 = self._bvh_world_rotation(f1, entry.bvh_joint, cache1)
+            R_src_world = (1.0 - a) * R0 + a * R1
+            U, _, Vt = np.linalg.svd(R_src_world)
+            R_src_world = (U @ Vt).astype(np.float32)
+            if M is not None:
+                R_src_world = M @ R_src_world @ M
+            R_our_world = R_src_world @ entry.R_rest
+            R_our_local = parent_world.T @ R_our_world   # orthonormal inverse == transpose
+            pose[i] = bvh_mod.matrix_to_euler_xyz(R_our_local)
+            our_world[i] = R_our_world
 
         # Root translation from BVH root joint (scaled to metres, minus the
         # initial rest-pose root position so playback starts at origin).
