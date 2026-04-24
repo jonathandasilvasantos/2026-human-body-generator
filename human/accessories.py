@@ -37,65 +37,10 @@ def _hairline_cards(head_idx, parent, length, head_w, head_d, style):
     read from the front, approximating dense strand clumps without individual
     fibers.
     """
-    if style == "buzz":
-        y = length * (H_HAIRLINE - 0.010)
-        z = head_d * 0.88
-        return [prim.flat_patch(
-            (0.0, y, z),
-            (head_w * 0.68, length * 0.020),
-            head_idx, parent, normal=(0, 0.10, 1),
-            subdiv=(10, 2), thickness=0.002,
-        )]
-
-    if style == "short":
-        fringe_y = length * (H_HAIRLINE - 0.055)
-        temple_y = length * (H_HAIRLINE - 0.090)
-        return [
-            prim.flat_patch(
-                (0.0, fringe_y, head_d * 0.92),
-                (head_w * 0.46, length * 0.055),
-                head_idx, parent, normal=(0, 0.18, 1),
-                subdiv=(8, 3), thickness=0.003,
-            ),
-            prim.flat_patch(
-                (+head_w * 0.58, temple_y, head_d * 0.72),
-                (head_w * 0.18, length * 0.075),
-                head_idx, parent, normal=(0.35, 0.08, 1),
-                subdiv=(4, 4), thickness=0.003,
-            ),
-            prim.flat_patch(
-                (-head_w * 0.58, temple_y, head_d * 0.72),
-                (head_w * 0.18, length * 0.075),
-                head_idx, parent, normal=(-0.35, 0.08, 1),
-                subdiv=(4, 4), thickness=0.003,
-            ),
-        ]
-
-    if style in ("medium", "long"):
-        fringe_y = length * (H_HAIRLINE - 0.035)
-        temple_y = length * (H_EYE + 0.040)
-        temple_h = length * (0.13 if style == "medium" else 0.20)
-        return [
-            prim.flat_patch(
-                (0.0, fringe_y, head_d * 0.92),
-                (head_w * 0.42, length * 0.030),
-                head_idx, parent, normal=(0, 0.15, 1),
-                subdiv=(9, 3), thickness=0.003,
-            ),
-            prim.flat_patch(
-                (+head_w * 0.68, temple_y, head_d * 0.58),
-                (head_w * 0.16, temple_h),
-                head_idx, parent, normal=(0.45, -0.05, 1),
-                subdiv=(4, 6), thickness=0.003,
-            ),
-            prim.flat_patch(
-                (-head_w * 0.68, temple_y, head_d * 0.58),
-                (head_w * 0.16, temple_h),
-                head_idx, parent, normal=(-0.45, -0.05, 1),
-                subdiv=(4, 6), thickness=0.003,
-            ),
-        ]
-
+    # Prior cycles used front-facing hair cards for the hairline. On close
+    # face captures those read as dark stickers on the forehead/cheeks. The
+    # scalp cap and rear drape now carry the silhouette, keeping the face
+    # unobstructed and avoiding glued-on hair artifacts.
     return []
 
 
@@ -113,14 +58,14 @@ def build_hair(bones, style: str) -> SkinnedMesh:
 
     # Scalp ellipsoid sized just outside the skull, hugging the crown.
     # Skull center y was (H_TOP + H_CHIN)/2 * length; we match that.
-    scalp_cy = length * (H_TOP + H_CHIN) * 0.5 + length * 0.02
-    scalp_rx = head_w * 1.05
-    scalp_ry = length * (H_TOP - H_CHIN) * 0.5 * 1.02
-    scalp_rz = head_d * 1.05
+    scalp_cy = length * (H_TOP + H_CHIN) * 0.5 + length * 0.012
+    scalp_rx = head_w * 1.025
+    scalp_ry = length * (H_TOP - H_CHIN) * 0.5 * 1.005
+    scalp_rz = head_d * 1.02
 
     if style == "buzz":
         # Very short fuzz: keep only the upper dome, ending above the brow.
-        y_cut = (length * H_BROW - scalp_cy) / scalp_ry  # map brow y to ellipsoid param
+        y_cut = (length * (H_HAIRLINE - 0.01) - scalp_cy) / scalp_ry
         chunks = [prim.hemisphere_cap(
             (0.0, scalp_cy, 0.0),
             (scalp_rx, scalp_ry, scalp_rz),
@@ -130,22 +75,23 @@ def build_hair(bones, style: str) -> SkinnedMesh:
         )]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "short":
-        # Cut just below brow for a short layered style with a visible hairline.
-        y_cut = (length * (H_BROW - 0.02) - scalp_cy) / scalp_ry
+        # Cut near the anatomical hairline, not down over the eyebrows.
+        y_cut = (length * (H_HAIRLINE - 0.04) - scalp_cy) / scalp_ry
         chunks = [prim.hemisphere_cap(
             (0.0, scalp_cy, -length * 0.01),
-            (scalp_rx * 1.03, scalp_ry * 1.04, scalp_rz * 1.04),
+            (scalp_rx * 1.02, scalp_ry * 1.02, scalp_rz * 1.02),
             head_idx, parent,
             rings=8, radial=24,
             y_cutoff=max(-0.5, y_cut),
         )]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "medium":
-        # Reaches past the ears down toward the jawline.
-        y_cut = (length * (H_MOUTH + 0.04) - scalp_cy) / scalp_ry
+        # More volume than short hair, but the cap still stops above the
+        # orbits so it doesn't cover the face.
+        y_cut = (length * (H_HAIRLINE - 0.08) - scalp_cy) / scalp_ry
         chunks = [prim.hemisphere_cap(
             (0.0, scalp_cy, -length * 0.01),
-            (scalp_rx * 1.06, scalp_ry * 1.08, scalp_rz * 1.08),
+            (scalp_rx * 1.04, scalp_ry * 1.05, scalp_rz * 1.05),
             head_idx, parent,
             rings=10, radial=26,
             y_cutoff=max(-1.3, y_cut),
@@ -155,20 +101,20 @@ def build_hair(bones, style: str) -> SkinnedMesh:
         # Scalp cap + drape flowing down past the shoulders. The drape's
         # own ellipsoid is positioned BELOW the skull so it reads as hair
         # falling naturally, not as a pointy cone standing on top.
-        y_cut_top = (length * (H_MOUTH - 0.02) - scalp_cy) / scalp_ry
-        drape_cy = length * 0.05
+        y_cut_top = (length * (H_HAIRLINE - 0.04) - scalp_cy) / scalp_ry
+        drape_cy = length * 0.10
         drape_ry = length * 0.55  # not so tall: its top should sit below the crown
         chunks = [
             prim.hemisphere_cap(
                 (0.0, scalp_cy, -length * 0.01),
-                (scalp_rx * 1.08, scalp_ry * 1.10, scalp_rz * 1.10),
+                (scalp_rx * 1.05, scalp_ry * 1.07, scalp_rz * 1.07),
                 head_idx, parent,
                 rings=10, radial=28, y_cutoff=max(-1.6, y_cut_top),
             ),
             # Lower drape behind and around the head.
             prim.hemisphere_cap(
-                (0.0, drape_cy, -length * 0.04),
-                (scalp_rx * 1.12, drape_ry, scalp_rz * 1.14),
+                (0.0, drape_cy, -head_d * 1.55),
+                (scalp_rx * 1.08, drape_ry, scalp_rz * 0.72),
                 head_idx, parent,
                 rings=10, radial=28, y_cutoff=-0.6,
             ),
@@ -199,22 +145,22 @@ def build_eyebrows(bones, weights=None) -> SkinnedMesh:
         return _empty_mesh()
     head_idx, parent, R, length, _r, head_w, head_d = info
 
-    sep_inner = length * 0.085
-    sep_mid   = length * 0.118
-    sep_outer = length * 0.148
-    y_inner_b = length * (H_BROW - 0.020)
-    y_mid_b   = length * (H_BROW + 0.005)
-    y_outer_b = length * (H_BROW - 0.002)
-    z = head_d * 0.86
-    hy = length * 0.013
-    inner_size  = (length * 0.024, hy)
-    mid_size    = (length * 0.032, hy * 1.05)
-    outer_size  = (length * 0.026, hy * 0.85)
+    sep_inner = length * 0.074
+    sep_mid   = length * 0.102
+    sep_outer = length * 0.128
+    y_inner_b = length * (H_BROW - 0.006)
+    y_mid_b   = length * (H_BROW + 0.012)
+    y_outer_b = length * (H_BROW + 0.006)
+    z = head_d * 0.78
+    hy = length * 0.0048
+    inner_size  = (length * 0.012, hy)
+    mid_size    = (length * 0.017, hy * 1.05)
+    outer_size  = (length * 0.014, hy * 0.90)
 
     inner_up   = _fa.w(weights, "browInnerUp")
-    LIFT       = length * 0.030     # full-weight vertical lift
-    PINCH      = length * 0.012     # full-weight inner-X pull toward midline
-    DROP       = length * 0.025     # full-weight brow-down drop
+    LIFT       = length * 0.024     # full-weight vertical lift
+    PINCH      = length * 0.010     # full-weight inner-X pull toward midline
+    DROP       = length * 0.020     # full-weight brow-down drop
 
     chunks = []
     for side, suffix in ((+1.0, "Left"), (-1.0, "Right")):

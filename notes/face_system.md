@@ -77,6 +77,35 @@ effect is subliminal at front view and visible at three-quarter.
 - Age creases are currently flat patches pinned to the skin surface. At
   three-quarter angles the patches can read as stuck-on plates. A future
   cycle should normal-offset them along the skull normal.
-- `face_asymmetry` only affects the skull shell; the feature primitives
-  (nose, brow, ears) remain mirror-symmetric. Acceptable for the current
-  cycle but worth revisiting.
+- The face remains a primitive-based procedural rig rather than a continuous
+  FLAME-style topology, so profile views still show stylized simplifications.
+  The current realism pass reduces the most visible caricature cues while
+  preserving the ARKit-52/FACS interface.
+
+## Realism / animation compatibility cycle
+
+Branch `feature/face-realism-animation-compat` focused on improving rest
+proportions without changing the facial animation standard:
+
+- Added conservative identity traits to `Shape` (`eye_sep`, `eye_size`,
+  `eye_depth`, `nose_width`, `nose_proj`, `nose_bridge`, `cheekbone`,
+  `jaw_width`, `chin_proj`, `brow_prominence`) so gender, skin tone and face
+  structure are not tied to stereotypes.
+- Rebalanced landmarks and skull profile to reduce caricature: less pinched
+  jaw, subtler chin projection, smaller nose primitives, smaller/deeper eyes,
+  finer eyebrows and ears.
+- Routed appearance age into the structural head pass, keeping age detail
+  compatible with the existing `Appearance.age_group` field.
+- Removed front-facing hairline cards that read as stickers in close-up and
+  moved long-hair drape behind the skull to avoid eye/cheek intersections.
+- Added skin-colored eye socket/canthus cover patches and a dark oral aperture
+  behind the lips. These are driven by the same ARKit weights and do not alter
+  the channel API.
+
+Validation captures:
+
+- `screenshots/face_realism_baseline/` — pre-change static baseline.
+- `screenshots/face_realism_final_static/` — final static grid and demographic
+  preset matrix.
+- `screenshots/face_realism_final_anim/` — final ARKit/FACS presets, clips,
+  channel isolation, asymmetry, cross-character and walk+face validation.

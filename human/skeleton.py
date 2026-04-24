@@ -100,6 +100,20 @@ class Shape:
     # lip_fullness:   multiplier on lip y/z radii (1.0 = baseline).
     face_asymmetry: float = 0.0
     lip_fullness: float = 1.0
+    # Fine-grained head/face identity traits. These are anatomical shape
+    # ranges, not expression controls; the ARKit/FACS animation surface stays
+    # fully independent and layers on top of these rest proportions.
+    eye_sep: float = 1.0
+    eye_size: float = 1.0
+    eye_depth: float = 1.0
+    nose_width: float = 1.0
+    nose_proj: float = 1.0
+    nose_bridge: float = 1.0
+    cheekbone: float = 1.0
+    jaw_width: float = 1.0
+    chin_proj: float = 1.0
+    brow_prominence: float = 1.0
+    age_group: str = "adult"
 
 
 # Per-bone shape rules: which shape knobs scale the head/tip offsets and
@@ -529,6 +543,19 @@ def random_shape(gender: str | None = None) -> Shape:
     else:
         lip_fullness = random.uniform(0.90, 1.10)
 
+    # Identity variation is intentionally decoupled from gender and skin tone:
+    # it gives broad human facial diversity without hard-coding stereotypes.
+    eye_sep = random.uniform(0.92, 1.08)
+    eye_size = random.uniform(0.92, 1.06)
+    eye_depth = random.uniform(0.94, 1.08)
+    nose_width = random.uniform(0.88, 1.14)
+    nose_proj = random.uniform(0.88, 1.12)
+    nose_bridge = random.uniform(0.86, 1.12)
+    cheekbone = random.uniform(0.92, 1.10)
+    jaw_width = random.uniform(0.92, 1.10)
+    chin_proj = random.uniform(0.90, 1.10)
+    brow_prominence = random.uniform(0.86, 1.14)
+
     return Shape(
         gender=gender,
         height=height,
@@ -547,4 +574,15 @@ def random_shape(gender: str | None = None) -> Shape:
         q_angle=q_angle,
         face_asymmetry=face_asymmetry,
         lip_fullness=lip_fullness,
+        eye_sep=eye_sep,
+        eye_size=eye_size,
+        eye_depth=eye_depth,
+        nose_width=nose_width,
+        nose_proj=nose_proj,
+        nose_bridge=nose_bridge,
+        cheekbone=cheekbone,
+        jaw_width=jaw_width,
+        chin_proj=chin_proj,
+        brow_prominence=brow_prominence,
+        age_group="adult",
     )

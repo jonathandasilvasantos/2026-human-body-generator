@@ -64,6 +64,7 @@ _EYE_COLORS: List[Color] = [
 _EYE_WHITE:    Color = (0.93, 0.91, 0.87)  # warm off-white sclera
 _EYE_LIMBUS:   Color = (0.06, 0.05, 0.05)  # dark corneoscleral ring
 _EYE_CATCH:    Color = (1.00, 0.99, 0.96)  # near-white specular catchlight
+_MOUTH_DARK:   Color = (0.08, 0.035, 0.035)
 
 
 # --- appearance --------------------------------------------------------------
@@ -307,6 +308,10 @@ class Character:
             out.append(Drawable(renderer.MeshGPU(mesh), color, mode))
 
         # body skin (body + head compound + bust + glutes handled by build())
+        # Feed the appearance age into the structural head pass. The value is
+        # only a rest-shape hint; expression animation still resolves through
+        # ARKit blendshape weights below.
+        self.shape.age_group = app.age_group
         add(mesh_mod.build(self.bones, self.shape), app.skin_color, 0)
 
         # eyes -- back-to-front so each layer can be drawn opaque without
@@ -345,6 +350,8 @@ class Character:
             _EYE_CATCH, 3)
         add(mesh_mod.build_eyelids(self.bones, self.shape, face_w),
             app.skin_color, 0)
+        add(mesh_mod.build_mouth_cavity(self.bones, self.shape, face_w),
+            _MOUTH_DARK, 0)
         add(mesh_mod.build_lips(self.bones, self.shape, face_w),
             app.lip_color, 0)
 

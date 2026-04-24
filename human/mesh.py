@@ -578,12 +578,12 @@ def build(bones, shape=None) -> SkinnedMesh:
 # chin->nose-base, nose-base->brow, brow->hairline are approximately equal.
 # Eyes sit near the vertical midpoint of the head including skull top.
 # References: Leonardo canon; Farkas facial anthropometry; FLAME landmarks.
-H_CHIN      = 0.08
-H_MOUTH     = 0.28
-H_NOSE_BASE = 0.40
+H_CHIN      = 0.06
+H_MOUTH     = 0.31
+H_NOSE_BASE = 0.43
 H_EYE       = 0.55
 H_BROW      = 0.63
-H_HAIRLINE  = 0.80
+H_HAIRLINE  = 0.77
 H_TOP       = 1.00
 
 
@@ -682,10 +682,20 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
 
     # Reference half-widths / depths. Real-world adult head proportions
     # (height : width : depth) ~= 1.0 : 0.65 : 0.90.
-    w_factor = 0.34 * (1.06 if gender == "male" else 0.98)
-    d_factor = 0.40
+    w_factor = 0.335 * (1.05 if gender == "male" else 0.99)
+    d_factor = 0.385
     head_w = length * w_factor
     head_d = length * d_factor
+    age_group = getattr(shape, "age_group", "adult") if shape is not None else "adult"
+    age_young = 1.0 if age_group == "young" else 0.0
+    age_elder = 1.0 if age_group == "elder" else 0.0
+    cheekbone = _shape_trait(shape, "cheekbone", 1.0)
+    jaw_width = _shape_trait(shape, "jaw_width", 1.0)
+    chin_proj = _shape_trait(shape, "chin_proj", 1.0)
+    nose_width = _shape_trait(shape, "nose_width", 1.0)
+    nose_proj = _shape_trait(shape, "nose_proj", 1.0)
+    nose_bridge = _shape_trait(shape, "nose_bridge", 1.0)
+    brow_prom = _shape_trait(shape, "brow_prominence", 1.0)
 
     chunks = []
 
@@ -698,7 +708,7 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     #   * occiput pushed back in Z at the crown, forehead slightly forward
     # Gender dimorphism: male has wider jaw (less taper) and more forward
     # chin; female has more pronounced jaw taper.
-    jaw_taper = 0.38 if gender == "male" else 0.50   # chin width reduction
+    jaw_taper = (0.22 if gender == "male" else 0.30) / max(jaw_width, 0.75)
     # Skull depth is not front/back symmetric: the occipital bulge sits
     # behind the head so much further than the forehead protrudes. We
     # split the depth into a front half and a back half and handle them
@@ -707,11 +717,20 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     def profile(t):
         # Width (rx) profile ------------------------------------------------
         if t >= 0:
-            rx_scale = 1.0 - 0.08 * t * t
+            rx_scale = 1.0 - 0.11 * t * t
+            # Young heads keep a little more rounded cranium; elder heads
+            # lose a touch of temporal fullness.
+            rx_scale += 0.020 * age_young * max(t, 0.0)
+            rx_scale -= 0.025 * age_elder * max(t - 0.25, 0.0)
         else:
             u = -t
             rx_scale = 1.0 - jaw_taper * (u * u * (3 - 2 * u))
-            rx_scale = max(rx_scale, 0.28)
+            # Cheekbone variation is broad but subtle; it peaks high in the
+            # midface and fades before it turns into a caricatured jaw.
+            cheek_band = max(0.0, 1.0 - abs(t - 0.06) * 3.8)
+            rx_scale *= 1.0 + (cheekbone - 1.0) * 0.11 * cheek_band
+            rx_scale *= 1.0 + 0.030 * age_elder * u
+            rx_scale = max(rx_scale, 0.46 if gender == "male" else 0.40)
         rx = head_w * rx_scale
 
         # Asymmetric front / back depth ------------------------------------
@@ -719,11 +738,11 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
         # and tapers a bit toward chin and crown. Back (occiput) is rounder
         # and a bit deeper at the crown so the profile shows a true skull.
         if t >= 0:
-            rz_f = head_d * (1.00 - 0.16 * t * t)     # forehead slopes back
+            rz_f = head_d * (0.98 - 0.18 * t * t)     # forehead slopes back
         else:
-            rz_f = head_d * max(0.96 + 0.14 * t, 0.72)  # chin shallower
+            rz_f = head_d * max(0.95 + 0.12 * t, 0.74)  # chin shallower
         if t >= 0:
-            rz_b = head_d * (1.08 + 0.06 * t - 0.14 * t * t)
+            rz_b = head_d * (1.06 + 0.07 * t - 0.12 * t * t)
         else:
             rz_b = head_d * max(1.06 + 0.28 * t, 0.78)
 
@@ -731,9 +750,13 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
         # skull forward below the mouth, peaking at the chin tip.
         if t < -0.3:
             u = (-t - 0.3) / 0.7
-            chin_push = 0.14 * u * u * (3 - 2 * u)
+            chin_push = 0.10 * chin_proj * u * u * (3 - 2 * u)
         else:
             chin_push = 0.0
+        # Elder lower faces settle slightly forward/down around the mouth and
+        # chin; keeping this in the skull shell avoids floating detail pieces.
+        if t < -0.15:
+            chin_push += 0.018 * age_elder * (-t - 0.15)
         cz = head_d * chin_push
         return rx, rz_f, rz_b, cz
 
@@ -755,22 +778,22 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # to just above the tip. Narrower in X than before, and longer in Y so
     # the nose has a visible bridge line.
     bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.70)
-    bridge_rx = length * (0.030 if gender == "male" else 0.026)
+    bridge_rx = length * (0.020 if gender == "male" else 0.018) * nose_width
     bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.60
-    bridge_rz = length * 0.060
+    bridge_rz = length * 0.040 * nose_bridge * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, bridge_cy, head_d * 0.90),
+        (0.0, bridge_cy, head_d * (0.84 + 0.03 * nose_proj)),
         (bridge_rx, bridge_ry, bridge_rz),
         head_idx, parent_idx, rings=10, radial=12,
     ))
 
     # Nose tip: rounded bulb at the base of the nose, protruding forward.
     tip_cy = length * (H_NOSE_BASE + 0.02)
-    tip_rx = length * (0.050 if gender == "male" else 0.044)
-    tip_ry = length * 0.040
-    tip_rz = length * 0.055
+    tip_rx = length * (0.034 if gender == "male" else 0.031) * nose_width
+    tip_ry = length * 0.030
+    tip_rz = length * 0.040 * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, tip_cy, head_d * 0.95),
+        (0.0, tip_cy, head_d * (0.90 + 0.05 * nose_proj)),
         (tip_rx, tip_ry, tip_rz),
         head_idx, parent_idx, rings=10, radial=14,
     ))
@@ -778,12 +801,12 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # Nostril wings (alae): two small lobes flanking the tip, implying
     # nostrils without modelling a cavity. Placed slightly behind the tip
     # so the tip still reads as the forwardmost point.
-    wing_rx = length * 0.025
-    wing_ry = length * 0.024
-    wing_rz = length * 0.032
-    wing_sep = length * (0.040 if gender == "male" else 0.034)
+    wing_rx = length * 0.018 * nose_width
+    wing_ry = length * 0.017
+    wing_rz = length * 0.024 * nose_proj
+    wing_sep = length * (0.032 if gender == "male" else 0.028) * nose_width
     wing_cy = length * (H_NOSE_BASE + 0.005)
-    wing_cz = head_d * 0.87
+    wing_cz = head_d * (0.86 + 0.03 * nose_proj)
     chunks += [
         prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
                        (wing_rx, wing_ry, wing_rz),
@@ -797,12 +820,12 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # Subtle supraorbital ridge: two short arched swells above each orbit
     # (not a single horizontal bar). Male's is more prominent. Tucked
     # deep enough that only a soft highlight pokes through the shell.
-    brow_ry = length * (0.012 if gender == "male" else 0.008)
-    brow_rz = length * (0.020 if gender == "male" else 0.015)
+    brow_ry = length * (0.008 if gender == "male" else 0.006) * brow_prom
+    brow_rz = length * (0.014 if gender == "male" else 0.010) * brow_prom
     brow_rx = length * 0.070
     brow_y = length * (H_BROW - 0.015)
     brow_sep = length * 0.105
-    brow_z = head_d * 0.65
+    brow_z = head_d * 0.60
     chunks += [
         prim.ellipsoid((+brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
                        head_idx, parent_idx, rings=6, radial=14),
@@ -819,23 +842,23 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # base -- the canonical anatomical positioning. Built from two pieces
     # per side: a helix (outer rim) and a lobe. They hug the skull and
     # tilt back slightly so they read correctly in profile.
-    ear_top_y = length * (H_BROW - 0.02)
-    ear_bot_y = length * (H_NOSE_BASE - 0.02)
+    ear_top_y = length * (H_BROW - 0.01)
+    ear_bot_y = length * (H_NOSE_BASE - 0.01)
     ear_cy = 0.5 * (ear_top_y + ear_bot_y)
     ear_half_h = 0.5 * (ear_top_y - ear_bot_y)
-    ear_cz = -head_d * 0.10          # pushed back: ear canal sits behind eye line
-    ear_x = head_w * 0.98
+    ear_cz = -head_d * 0.04          # canal sits behind eye line without floating
+    ear_x = head_w * 0.93
     for side in (+1.0, -1.0):
         # Helix: tall narrow vertical capsule that forms the outer rim.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_cy + ear_half_h * 0.05, ear_cz),
-            (length * 0.020, ear_half_h * 1.10, length * 0.060),
+            (length * 0.014, ear_half_h * 1.02, length * 0.045),
             head_idx, parent_idx, rings=10, radial=14,
         ))
         # Lobe: small bulb at the bottom, slightly protruding forward.
         chunks.append(prim.ellipsoid(
-            (side * ear_x, ear_bot_y - length * 0.005, ear_cz + length * 0.010),
-            (length * 0.024, length * 0.026, length * 0.038),
+            (side * ear_x, ear_bot_y - length * 0.002, ear_cz + length * 0.006),
+            (length * 0.016, length * 0.018, length * 0.026),
             head_idx, parent_idx, rings=8, radial=12,
         ))
 
@@ -975,6 +998,13 @@ def _shape_trait(shape, name, default=1.0):
     return float(getattr(shape, name, default))
 
 
+def _head_age(shape):
+    if shape is None:
+        return "adult"
+    age = getattr(shape, "age_group", "adult")
+    return age if age in ("young", "adult", "elder") else "adult"
+
+
 def _head_info(bones, shape=None):
     """Shared helper: head bone index, parent, rest rotation, length, depth.
 
@@ -990,16 +1020,16 @@ def _head_info(bones, shape=None):
     R = mathx.align_y_to(tip)
     length = float(np.linalg.norm(tip))
     gender = getattr(shape, "gender", "neutral") if shape is not None else "neutral"
-    head_d = length * 0.40
-    head_w = length * 0.34 * (1.06 if gender == "male" else 0.98)
+    head_d = length * 0.385
+    head_w = length * 0.335 * (1.05 if gender == "male" else 0.99)
     return head_idx, parent, R, length, r, head_w, head_d
 
 
 # Eye geometry constants (factored so eyeball / iris / pupil / limbus /
 # catchlight stay in perfect concentric agreement and convergence is
 # applied identically everywhere). All scales are relative to head length.
-EYE_SEP_X      = 0.108   # half-distance between eye centers
-EYE_RADIUS     = 0.050   # eyeball radius (true sphere)
+EYE_SEP_X      = 0.098   # half-distance between eye centers
+EYE_RADIUS     = 0.037   # eyeball radius (true sphere)
 IRIS_RATIO     = 0.55    # iris radius as fraction of eyeball radius
 PUPIL_RATIO    = 0.30    # pupil radius as fraction of iris radius (~3mm)
 LIMBUS_RATIO   = 1.10    # limbal-ring outer radius as fraction of iris
@@ -1023,7 +1053,7 @@ def _eye_metrics(length, head_d):
     """
     sep   = length * EYE_SEP_X
     y     = length * H_EYE
-    z     = head_d * 0.70
+    z     = head_d * 0.56
     eye_r = length * EYE_RADIUS
     # iris depth ahead of eyeball center
     iris_z_off = eye_r * 0.75
@@ -1038,6 +1068,28 @@ def _eye_metrics(length, head_d):
     else:
         conv_shift = 0.0
     return sep, y, z, eye_r, conv_shift
+
+
+def _eye_metrics_for_shape(length, head_d, shape=None):
+    """Eye placement with rest-identity traits applied consistently."""
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep *= _shape_trait(shape, "eye_sep", 1.0)
+    eye_r *= _shape_trait(shape, "eye_size", 1.0)
+    # Larger value means deeper-set eyes. The center moves back, but the iris
+    # layers still project forward from that same center, preserving rig sync.
+    z *= 1.0 / max(_shape_trait(shape, "eye_depth", 1.0), 0.75)
+    if _head_age(shape) == "young":
+        eye_r *= 1.03
+    elif _head_age(shape) == "elder":
+        eye_r *= 0.96
+        y -= length * 0.006
+    iris_z_off = eye_r * 0.75
+    if GAZE_TARGET_M > 0:
+        import math as _m
+        conv = iris_z_off * _m.tan(_m.atan(sep / GAZE_TARGET_M))
+    else:
+        conv = 0.0
+    return sep, y, z, eye_r, conv
 
 
 def _gaze_offset(eye_r, weights):
@@ -1071,7 +1123,7 @@ def build_eyes(bones, shape=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, _ = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, _ = _eye_metrics_for_shape(length, head_d, shape)
     # Truly spherical eyeball -- previous (rx, ry*0.95, rz*0.9) gave a
     # squashed ovoid that read as a flat disc once the lids covered the
     # poles. A real sclera is near-perfectly spherical.
@@ -1098,7 +1150,7 @@ def build_limbus(bones, shape=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, conv = _eye_metrics_for_shape(length, head_d, shape)
     iris_r = eye_r * IRIS_RATIO
     limb_r = iris_r * LIMBUS_RATIO
     # Sits a hair behind the iris so only the outer ring peeks through.
@@ -1120,7 +1172,7 @@ def build_iris(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, conv = _eye_metrics_for_shape(length, head_d, shape)
     iris_r = eye_r * IRIS_RATIO
     radii = (iris_r, iris_r, iris_r * 0.42)
     z_iris = z + eye_r * 0.75
@@ -1146,7 +1198,7 @@ def build_pupils(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, conv = _eye_metrics_for_shape(length, head_d, shape)
     iris_r = eye_r * IRIS_RATIO
     pr = iris_r * PUPIL_RATIO
     radii = (pr, pr, pr * 0.4)
@@ -1177,7 +1229,7 @@ def build_collarette(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, conv = _eye_metrics_for_shape(length, head_d, shape)
     iris_r = eye_r * IRIS_RATIO
     coll_r = iris_r * 0.58
     radii = (coll_r, coll_r, coll_r * 0.16)
@@ -1205,7 +1257,7 @@ def build_caruncle(bones, shape=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, _conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, _conv = _eye_metrics_for_shape(length, head_d, shape)
     # Sit just medial of the eyeball, slightly forward of the eye center.
     cx = sep - eye_r * 0.95
     cy = y - eye_r * 0.05
@@ -1234,7 +1286,7 @@ def build_catchlights(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    sep, y, z, eye_r, conv = _eye_metrics_for_shape(length, head_d, shape)
     iris_r = eye_r * IRIS_RATIO
     cr = iris_r * 0.18
     radii = (cr, cr, cr * 0.5)
@@ -1271,13 +1323,10 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep = length * 0.115
-    y = length * H_EYE
-    z = head_d * 0.78
-    eye_r = length * 0.060
+    sep, y, z, eye_r, _conv = _eye_metrics_for_shape(length, head_d, shape)
 
-    lid_z = z + eye_r * 0.96
-    hx = length * 0.068
+    lid_z = z + eye_r * 0.88
+    hx = eye_r * 1.36
 
     chunks = []
     # side=+1 is character's LEFT eye (camera right). ARKit naming is
@@ -1294,8 +1343,8 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
         if aperture < 0.05:
             aperture = 0.05
 
-        upper_y = y + eye_r * (0.70 * aperture)
-        lower_y = y - eye_r * (0.60 * aperture)
+        upper_y = y + eye_r * (0.58 * aperture)
+        lower_y = y - eye_r * (0.50 * aperture)
         # cheekSquint pulls the *lower* lid up (orbicularis oculi, pars
         # orbitalis) without touching the upper lid -- the Duchenne tell.
         # Bigger amplitude makes the eye-narrowing read clearly when
@@ -1307,8 +1356,8 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
             target_y = lower_y + eye_r * 0.05
             upper_y = upper_y * (1.0 - blink) + target_y * blink
 
-        upper_hy = length * (0.022 - 0.006 * wide)
-        lower_hy = length * (0.012 + 0.004 * (squint + cheek_s))
+        upper_hy = eye_r * (0.46 - 0.08 * wide)
+        lower_hy = eye_r * (0.26 + 0.08 * (squint + cheek_s))
 
         chunks.append(prim.flat_patch(
             (x, upper_y, lid_z),
@@ -1325,6 +1374,25 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
             normal=(0.0, -0.08, 1.0),
             subdiv=(8, 2),
             thickness=0.002,
+        ))
+        # Canthus/socket cover: small skin-colored corner pads that hide the
+        # exposed side of the spherical eyeball in profile while leaving the
+        # iris/pupil and ARKit gaze offsets visible.
+        chunks.append(prim.flat_patch(
+            (x + side * hx * 0.88, y + eye_r * 0.02, lid_z - eye_r * 0.02),
+            (eye_r * 0.14, eye_r * 0.36),
+            head_idx, parent,
+            normal=(side * 0.28, 0.00, 1.0),
+            subdiv=(2, 4),
+            thickness=0.0022,
+        ))
+        chunks.append(prim.flat_patch(
+            (x - side * hx * 0.88, y - eye_r * 0.01, lid_z - eye_r * 0.02),
+            (eye_r * 0.11, eye_r * 0.30),
+            head_idx, parent,
+            normal=(-side * 0.18, 0.00, 1.0),
+            subdiv=(2, 4),
+            thickness=0.0022,
         ))
 
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
@@ -1358,8 +1426,12 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
     y_mouth = length * H_MOUTH
-    z = head_d * 0.86
+    z = head_d * 0.84
     fullness = _shape_trait(shape, "lip_fullness", 1.0)
+    if _head_age(shape) == "young":
+        fullness *= 1.04
+    elif _head_age(shape) == "elder":
+        fullness *= 0.82
 
     jaw_open    = _fa.w(weights, "jawOpen")
     pucker      = _fa.w(weights, "mouthPucker")
@@ -1384,20 +1456,23 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     lowDn_r  = _fa.w(weights, "mouthLowerDownRight")
     sneer_l  = _fa.w(weights, "noseSneerLeft")
     sneer_r  = _fa.w(weights, "noseSneerRight")
+    avg_smile = 0.5 * (smile_l + smile_r)
 
     # Vertical separation: jawOpen drops lower lip, mouthClose pulls
     # upper down to meet it (handled implicitly via reduced upper Y).
-    open_amt = length * 0.030 * jaw_open + length * 0.010 * funnel
+    open_amt = length * 0.060 * jaw_open + length * 0.016 * funnel
 
     # Upper lip: two symmetric lobes; per-side raise from upUp + sneer.
-    up_half_sep = length * 0.028
-    up_rx = length * (0.048 - 0.012 * pucker + 0.010 * stretch_l)  # rough
-    up_ry = length * 0.011 * fullness * (1.0 - 0.35 * (press_l + press_r) * 0.5)
-    up_rz = length * (0.014 + 0.012 * pucker + 0.008 * funnel) * fullness
-    up_y = y_mouth + length * 0.010 + open_amt * 0.35
+    up_half_sep = length * 0.025
+    up_rx = length * (0.040 - 0.010 * pucker + 0.008 * stretch_l)  # rough
+    up_ry = length * 0.0085 * fullness * (1.0 - 0.35 * (press_l + press_r) * 0.5)
+    up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel) * fullness
+    up_y = y_mouth + length * 0.010 + open_amt * 0.35 + length * 0.004 * avg_smile
 
-    up_L_y = up_y + length * 0.014 * (upUp_l + 0.60 * sneer_l)
-    up_R_y = up_y + length * 0.014 * (upUp_r + 0.60 * sneer_r)
+    up_L_y = up_y + length * (0.014 * (upUp_l + 0.60 * sneer_l)
+                              + 0.010 * smile_l - 0.004 * frown_l)
+    up_R_y = up_y + length * (0.014 * (upUp_r + 0.60 * sneer_r)
+                              + 0.010 * smile_r - 0.004 * frown_r)
     upper_L = prim.ellipsoid(
         (+up_half_sep + lateral, up_L_y, z + length * 0.005 * pucker),
         (up_rx, up_ry, up_rz),
@@ -1410,22 +1485,22 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     )
 
     # Mouth corners: per-side smile / frown / dimple / stretch.
-    base_corner_x = length * 0.075
-    corner_rx = length * 0.014
-    corner_ry = length * 0.010
-    corner_rz = length * 0.010
+    base_corner_x = length * 0.060
+    corner_rx = length * 0.012
+    corner_ry = length * 0.0085
+    corner_rz = length * 0.0055
 
     def _corner(side_sign, smile, frown, dimple, stretch):
         # Wider amplitude than the legacy preset so a w=0.7 smile reads
         # plainly in a thumbnail-sized render. Frown amplitude is kept
         # smaller because mouth-corner-down past a few mm starts to
         # caricature.
-        lift = length * (0.026 * smile - 0.018 * frown)
+        lift = length * (0.044 * smile - 0.030 * frown)
         # dimple pulls corner back (-Z) and slightly inward (X toward 0).
         x = side_sign * (base_corner_x + length * 0.014 * stretch
                          - length * 0.006 * dimple)
         y = y_mouth + length * 0.001 + lift
-        z_off = -length * 0.003 - length * 0.008 * dimple
+        z_off = -length * 0.002 - length * 0.006 * dimple
         return prim.ellipsoid(
             (x + lateral, y, z + z_off),
             (corner_rx, corner_ry, corner_rz),
@@ -1440,10 +1515,10 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     avg_lowDn = 0.5 * (lowDn_l + lowDn_r)
     avg_press = 0.5 * (press_l + press_r)
     low_y = (y_mouth - length * 0.010 - open_amt * 0.65
-             - length * 0.014 * avg_lowDn)
-    low_rx = length * (0.082 - 0.022 * pucker + 0.014 * (stretch_l + stretch_r) * 0.5)
-    low_ry = length * 0.014 * fullness * (1.0 - 0.40 * avg_press)
-    low_rz = length * (0.016 + 0.010 * pucker + 0.008 * funnel) * fullness
+             - length * 0.014 * avg_lowDn + length * 0.003 * avg_smile)
+    low_rx = length * (0.070 - 0.018 * pucker + 0.011 * (stretch_l + stretch_r) * 0.5)
+    low_ry = length * 0.011 * fullness * (1.0 - 0.40 * avg_press)
+    low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel) * fullness
     lower = prim.ellipsoid(
         (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker),
         (low_rx, low_ry, low_rz),
@@ -1452,6 +1527,51 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     chunks = [upper_L, upper_R, corner_L, corner_R, lower]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_mouth_cavity(bones, shape=None, weights=None) -> SkinnedMesh:
+    """Dark oral aperture behind the lips.
+
+    The lips are separate ellipsoids, so without a darker aperture the ARKit
+    jaw and smile channels move visible pieces but do not read as an opening.
+    This patch stays behind the lip primitives and scales from a neutral slit
+    to an oval opening for ``jawOpen`` / ``mouthFunnel``.
+    """
+    from . import face_anim as _fa
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, _head_w, head_d = info
+
+    jaw_open = _fa.w(weights, "jawOpen")
+    funnel = _fa.w(weights, "mouthFunnel")
+    pucker = _fa.w(weights, "mouthPucker")
+    smile = 0.5 * (_fa.w(weights, "mouthSmileLeft")
+                   + _fa.w(weights, "mouthSmileRight"))
+    stretch = 0.5 * (_fa.w(weights, "mouthStretchLeft")
+                     + _fa.w(weights, "mouthStretchRight"))
+    press = 0.5 * (_fa.w(weights, "mouthPressLeft")
+                   + _fa.w(weights, "mouthPressRight"))
+    close = _fa.w(weights, "mouthClose")
+
+    openness = max(0.0, jaw_open + 0.45 * funnel - 0.60 * close - 0.45 * press)
+    half_x = length * (0.050 + 0.014 * smile + 0.020 * stretch - 0.018 * pucker)
+    half_x = max(length * 0.028, half_x)
+    half_y = length * (0.0025 + 0.026 * openness + 0.004 * funnel)
+    center_y = length * H_MOUTH - length * 0.004 - length * 0.010 * jaw_open
+    center_z = head_d * (0.835 + 0.010 * pucker)
+
+    chunk = prim.flat_patch(
+        (0.0, center_y, center_z),
+        (half_x, half_y),
+        head_idx, parent,
+        normal=(0.0, 0.0, 1.0),
+        subdiv=(8, 3),
+        thickness=0.0015,
+    )
+    v, n, ba, bb, w, idx = chunk
+    v, n = v @ R.T, n @ R.T
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
