@@ -43,39 +43,11 @@ from human.capture import _make_context, _make_fbo
 from human.character import Appearance, Character
 
 
-# Preston-Blair 12-viseme set -> ARKit-52. Values tuned for the existing
-# parametric mouth so the target reads plainly in a 512px thumbnail.
+# Preston-Blair 12-viseme set now lives in ``human.face_anim.VISEMES``.
+VISEME_ORDER = ["sil", "AI", "E", "O", "U", "MBP", "FV", "L", "WQ",
+                "etc", "S", "TH"]
 VISEMES: List[Tuple[str, Dict[str, float]]] = [
-    ("sil", {}),                                             # rest / silence
-    ("AI",  {"jawOpen": 0.55, "mouthShrugLower": 0.10,
-             "mouthLowerDownLeft": 0.25, "mouthLowerDownRight": 0.25}),
-    ("E",   {"jawOpen": 0.25,
-             "mouthSmileLeft": 0.25, "mouthSmileRight": 0.25,
-             "mouthStretchLeft": 0.35, "mouthStretchRight": 0.35}),
-    ("O",   {"jawOpen": 0.35, "mouthFunnel": 0.60,
-             "mouthPucker": 0.25}),
-    ("U",   {"jawOpen": 0.10, "mouthPucker": 0.85,
-             "mouthFunnel": 0.30}),
-    ("MBP", {"mouthClose": 1.0,
-             "mouthPressLeft": 0.55, "mouthPressRight": 0.55,
-             "mouthRollLower": 0.35, "mouthRollUpper": 0.35}),
-    ("FV",  {"jawOpen": 0.08,
-             "mouthRollLower": 0.75, "mouthShrugUpper": 0.10,
-             "mouthLowerDownLeft": 0.15, "mouthLowerDownRight": 0.15,
-             "mouthUpperUpLeft": 0.20, "mouthUpperUpRight": 0.20}),
-    ("L",   {"jawOpen": 0.30, "tongueOut": 0.35,
-             "mouthShrugLower": 0.10}),
-    ("WQ",  {"jawOpen": 0.20, "mouthPucker": 0.65,
-             "mouthFunnel": 0.35}),
-    ("etc", {"jawOpen": 0.20,
-             "mouthStretchLeft": 0.25, "mouthStretchRight": 0.25,
-             "mouthLowerDownLeft": 0.18, "mouthLowerDownRight": 0.18}),
-    ("S",   {"jawOpen": 0.08,
-             "mouthSmileLeft": 0.15, "mouthSmileRight": 0.15,
-             "mouthStretchLeft": 0.20, "mouthStretchRight": 0.20,
-             "mouthLowerDownLeft": 0.10, "mouthLowerDownRight": 0.10}),
-    ("TH",  {"jawOpen": 0.22, "tongueOut": 0.55,
-             "mouthStretchLeft": 0.10, "mouthStretchRight": 0.10}),
+    (name, face_anim.VISEMES[name]) for name in VISEME_ORDER
 ]
 
 # Short phrase timelines for the "sequence" matrix: (time_seconds, viseme).
@@ -254,6 +226,49 @@ def run_visemes(args, fbo_ms, fbo_res, skin_prog):
     return n
 
 
+PHONEME_SEQS: List[Tuple[str, List[Tuple[float, str]]]] = [
+    ("hello_ph",   [(0.00, "sil"), (0.10, "HH"), (0.22, "EH"),
+                    (0.34, "L"),   (0.48, "OW"), (0.62, "sil")]),
+    ("mama_ph",    [(0.00, "sil"), (0.08, "M"),  (0.20, "AA"),
+                    (0.32, "M"),   (0.44, "AA"), (0.58, "sil")]),
+    ("phone_ph",   [(0.00, "sil"), (0.10, "F"),  (0.22, "OW"),
+                    (0.34, "N"),   (0.50, "sil")]),
+    ("stew_ph",    [(0.00, "sil"), (0.10, "S"),  (0.22, "T"),
+                    (0.34, "UW"),  (0.50, "sil")]),  # s/t anticipate rounding
+]
+
+
+def run_phoneme_sequences(args, fbo_ms, fbo_res, skin_prog):
+    """Run phoneme streams through VisemeTrack (Cohen-Massaro dominance)
+    so the capture validates coarticulation, not just linear key interp."""
+    proj = mathx.perspective(math.radians(26),
+                             args.width / max(args.height, 1), 0.02, 20.0)
+    frames = 10
+    n = 0
+    for preset in CHAR_PRESETS[:1]:
+        for name, phonemes in PHONEME_SEQS:
+            track = face_anim.VisemeTrack.from_phonemes(phonemes, width=0.14)
+            duration = phonemes[-1][0]
+            row = []
+            for fi in range(frames):
+                t = duration * (fi / (frames - 1))
+                weights = track.sample(t)
+                ch = _make_character(preset, blendshapes=weights)
+                target = _head_target(ch)
+                view = _view(target, 0.0, dist=0.22)
+                img = _draw(ch, proj, view, args.width, args.height,
+                            fbo_ms, fbo_res, skin_prog)
+                row.append(_label_tile(img, f"{fi:02d}"))
+                ch.delete()
+                n += 1
+            strip = np.concatenate(row, axis=1)
+            out = os.path.join(args.out,
+                               f"{args.tag}_{preset['label']}_phseq_{name}.png")
+            Image.fromarray(strip, "RGBA").save(out)
+            print(f"  phseq {preset['label']} {name}")
+    return n
+
+
 def run_sequences(args, fbo_ms, fbo_res, skin_prog):
     proj = mathx.perspective(math.radians(26),
                              args.width / max(args.height, 1), 0.02, 20.0)
@@ -288,7 +303,8 @@ def main():
     ap.add_argument("--tag", default="baseline")
     ap.add_argument("--width",  type=int, default=512)
     ap.add_argument("--height", type=int, default=600)
-    ap.add_argument("--mode", choices=["visemes", "sequences", "all"],
+    ap.add_argument("--mode",
+                    choices=["visemes", "sequences", "phonemes", "all"],
                     default="all")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -307,6 +323,8 @@ def main():
         total += run_visemes(args, fbo_ms, fbo_res, skin_prog)
     if args.mode in ("sequences", "all"):
         total += run_sequences(args, fbo_ms, fbo_res, skin_prog)
+    if args.mode in ("phonemes", "all"):
+        total += run_phoneme_sequences(args, fbo_ms, fbo_res, skin_prog)
     glfw.terminate()
     print(f"done: {total} frames -> {args.out}")
 

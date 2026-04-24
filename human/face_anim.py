@@ -404,6 +404,214 @@ def _full(partial: Mapping[str, float]) -> Dict[str, float]:
     return out
 
 
+# --- visemes (speech) -------------------------------------------------------
+#
+# A *viseme* is the visible mouth shape of a phoneme. English has ~44
+# phonemes but only ~12 visually distinguishable mouth shapes -- this is
+# the classic Preston Blair (1946) set used by almost every production
+# lip-sync stack (Annosoft, Rhubarb, Oculus Lipsync, iClone, JALI). The
+# weights below encode each viseme as an ARKit-52 target, tuned against
+# the parametric lip + teeth + tongue geometry in this codebase.
+#
+# References:
+#   - Blair (1946), "Advanced Animation"
+#   - Ezzat, Geiger & Poggio (2002), "Trainable videorealistic speech"
+#   - Edwards, Landreth, Fiume & Singh (2016), "JALI: An Animator-
+#     Centric Viseme Model" (SIGGRAPH) -- separates jaw and lip
+#     articulators and drives them from phoneme stream with prosody.
+#   - Cohen & Massaro (1993), "Modeling coarticulation in synthetic
+#     visual speech" -- dominance-function coarticulation model used
+#     below for phoneme blending.
+
+VISEMES: Dict[str, Dict[str, float]] = {
+    # silence / rest
+    "sil": {},
+    # Open front vowel (AI / "father", "cat")
+    "AI":  _merge({"jawOpen": 0.55, "mouthShrugLower": 0.10},
+                  _sym("mouthLowerDown", 0.25)),
+    # Front unrounded vowel (E / "bed", "ay")
+    "E":   _merge({"jawOpen": 0.25},
+                  _sym("mouthSmile", 0.25),
+                  _sym("mouthStretch", 0.35)),
+    # Mid back rounded vowel (O / "go", "boat")
+    "O":   {"jawOpen": 0.35, "mouthFunnel": 0.60, "mouthPucker": 0.25},
+    # High back rounded vowel (U / "boot", "too")
+    "U":   {"jawOpen": 0.10, "mouthPucker": 0.85, "mouthFunnel": 0.30},
+    # Bilabials (M, B, P). Lips together, slight press.
+    "MBP": _merge({"mouthClose": 1.0,
+                   "mouthRollLower": 0.35, "mouthRollUpper": 0.35},
+                  _sym("mouthPress", 0.55)),
+    # Labiodentals (F, V). Upper incisors rest on lower lip.
+    "FV":  _merge({"jawOpen": 0.08, "mouthRollLower": 0.75,
+                   "mouthShrugUpper": 0.10},
+                  _sym("mouthLowerDown", 0.15),
+                  _sym("mouthUpperUp", 0.20)),
+    # Alveolar lateral (L) + coronal closures (N, D, T) share a viseme:
+    # tongue tip contacts alveolar ridge; mouth half-open.
+    "L":   _merge({"jawOpen": 0.30, "tongueOut": 0.35,
+                   "mouthShrugLower": 0.10}),
+    # Rounded glides (W, Q, OO as in "who"). Tight pucker.
+    "WQ":  {"jawOpen": 0.20, "mouthPucker": 0.65, "mouthFunnel": 0.35},
+    # Fricatives/plosives with teeth slightly apart and lips relaxed
+    # (K, G, H, schwa / "etc."). Preston Blair's catch-all.
+    "etc": _merge({"jawOpen": 0.20},
+                  _sym("mouthStretch", 0.25),
+                  _sym("mouthLowerDown", 0.18)),
+    # Sibilants (S, Z, CH, SH, J). Teeth near contact, mouth stretched.
+    "S":   _merge({"jawOpen": 0.08},
+                  _sym("mouthSmile", 0.15),
+                  _sym("mouthStretch", 0.20),
+                  _sym("mouthLowerDown", 0.10)),
+    # Interdental fricatives (TH / "thin", "this"). Tongue between teeth.
+    "TH":  _merge({"jawOpen": 0.22, "tongueOut": 0.55},
+                  _sym("mouthStretch", 0.10)),
+}
+
+
+# IPA-ish phoneme -> viseme map. Simple CMUdict-style ARPAbet codes are
+# also accepted. Unknown phonemes fall back to "etc".
+PHONEME_TO_VISEME: Dict[str, str] = {
+    # vowels
+    "AA": "AI", "AE": "AI", "AH": "AI", "AW": "AI", "AY": "AI",
+    "a": "AI", "ae": "AI",
+    "EH": "E", "EY": "E", "IH": "E", "IY": "E",
+    "e": "E", "i": "E",
+    "OW": "O", "OY": "O", "AO": "O", "o": "O",
+    "UW": "U", "UH": "U", "u": "U", "oo": "U",
+    "ER": "etc", "AX": "etc",
+    # consonants
+    "M": "MBP", "B": "MBP", "P": "MBP", "m": "MBP", "b": "MBP", "p": "MBP",
+    "F": "FV", "V": "FV", "f": "FV", "v": "FV",
+    "L": "L", "N": "L", "D": "L", "T": "L",
+    "l": "L", "n": "L", "d": "L", "t": "L",
+    "W": "WQ", "w": "WQ", "Q": "WQ",
+    "S": "S", "Z": "S", "CH": "S", "SH": "S", "ZH": "S", "JH": "S",
+    "s": "S", "z": "S", "sh": "S", "ch": "S",
+    "TH": "TH", "DH": "TH", "th": "TH",
+    "K": "etc", "G": "etc", "HH": "etc", "NG": "etc", "R": "etc", "Y": "etc",
+    "k": "etc", "g": "etc", "h": "etc", "r": "etc", "y": "etc",
+}
+
+
+def viseme_weights(name: str) -> Dict[str, float]:
+    """Return a full 52-channel weight dict for a named viseme.
+
+    Unknown names fall back to silence. Useful for applying a frozen
+    speech pose to ``Appearance.blendshapes``.
+    """
+    out = zeros()
+    base = VISEMES.get(name, {})
+    for k, v in base.items():
+        if k in ARKIT_INDEX:
+            out[k] = float(v)
+    return out
+
+
+def phoneme_to_viseme(phoneme: str) -> str:
+    """Map an ARPAbet / loose-IPA phoneme code to a viseme name."""
+    if phoneme in PHONEME_TO_VISEME:
+        return PHONEME_TO_VISEME[phoneme]
+    # Try case-insensitive fallback.
+    up = phoneme.upper()
+    if up in PHONEME_TO_VISEME:
+        return PHONEME_TO_VISEME[up]
+    lo = phoneme.lower()
+    if lo in PHONEME_TO_VISEME:
+        return PHONEME_TO_VISEME[lo]
+    return "etc"
+
+
+# --- coarticulation ---------------------------------------------------------
+#
+# Cohen & Massaro (1993) dominance model: each viseme has a time-
+# dependent dominance function centered on its midpoint; the rendered
+# mouth is the dominance-weighted average of *all* nearby visemes. This
+# captures coarticulation (lip rounding on "stew" reaches back through
+# the /s/, the /m/ in "moon" already rounds toward /u/, etc.) which a
+# simple linear-between-keys interpolator cannot.
+
+@dataclass
+class VisemeSegment:
+    """A single viseme with its time window and a peak dominance weight."""
+    time: float      # center time of the segment (seconds)
+    name: str        # viseme name (key into VISEMES)
+    width: float = 0.12  # full-width-half-max of the dominance curve
+    peak: float = 1.0    # peak dominance weight
+
+
+class VisemeTrack:
+    """Phoneme stream rendered with Cohen-Massaro dominance blending.
+
+    ``sample(t)`` returns a 52-channel ARKit weight dict. Each viseme
+    contributes a Gaussian-shaped dominance curve; output weights are
+    the dominance-weighted mean across active segments. This produces
+    smooth transitions with correct coarticulation overlap.
+
+    In the literature the dominance curves are piecewise negative-
+    exponential with separate "anticipation" and "carryover" half-
+    widths. The symmetric Gaussian used here is simpler and within the
+    tolerance needed for a visibly-plausible speech animation.
+    """
+
+    def __init__(self, segments: Iterable[VisemeSegment]):
+        self.segments: List[VisemeSegment] = sorted(segments, key=lambda s: s.time)
+
+    @classmethod
+    def from_phonemes(cls,
+                      phonemes: Iterable[Tuple[float, str]],
+                      width: float = 0.12) -> "VisemeTrack":
+        """Build from ``[(time_sec, phoneme_code), ...]`` pairs."""
+        segs = []
+        for t, p in phonemes:
+            segs.append(VisemeSegment(time=t, name=phoneme_to_viseme(p),
+                                      width=width))
+        return cls(segs)
+
+    def sample(self, t: float) -> Dict[str, float]:
+        if not self.segments:
+            return zeros()
+        # Gaussian dominance: d(t) = peak * exp(-((t - tc) / (width/2))^2)
+        # Only consider segments within ~3 half-widths (beyond that the
+        # contribution is <0.01 and numerically negligible).
+        doms: List[Tuple[VisemeSegment, float]] = []
+        for seg in self.segments:
+            half = max(1e-4, seg.width * 0.5)
+            z = (t - seg.time) / half
+            if abs(z) > 3.0:
+                continue
+            d = seg.peak * _gauss(z)
+            doms.append((seg, d))
+        if not doms:
+            # All segments far away -- fall back to nearest.
+            seg = min(self.segments, key=lambda s: abs(s.time - t))
+            return viseme_weights(seg.name)
+        total = sum(d for _, d in doms)
+        if total <= 1e-6:
+            return zeros()
+        out = zeros()
+        for seg, d in doms:
+            vw = VISEMES.get(seg.name, {})
+            scale = d / total
+            for k, v in vw.items():
+                if k in ARKIT_INDEX:
+                    out[k] += float(v) * scale
+        # clamp (weights sum > 1 is legitimate in the dominance model,
+        # but ARKit channels must stay within [0,1] for the lip
+        # geometry's parametric ranges).
+        for k in out:
+            if out[k] < 0.0:
+                out[k] = 0.0
+            elif out[k] > 1.0:
+                out[k] = 1.0
+        return out
+
+
+def _gauss(z: float) -> float:
+    # exp(-z^2); cheap ~1e-6 accuracy without math.exp import churn.
+    import math as _m
+    return _m.exp(-z * z)
+
+
 def clip_from_presets(steps: Iterable[Tuple[float, str]]) -> FaceClip:
     """Build a FaceClip from ``[(time, preset_name), ...]`` pairs.
 
