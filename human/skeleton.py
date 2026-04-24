@@ -230,6 +230,40 @@ def t_pose(n: int):
     return [(0.0, 0.0, 0.0)] * n
 
 
+def a_pose(bones: List[Bone]):
+    """Natural resting pose: arms hang at ~15 deg abduction from the torso
+    (between full T-pose and arms clipped against hips). This is what most
+    capture studios call an 'A-pose'."""
+    pose = [(0.0, 0.0, 0.0)] * len(bones)
+    try:
+        iL = bone_index(bones, "uarm_L")
+        pose[iL] = (0.0, 0.0, -0.26)
+    except KeyError:
+        pass
+    try:
+        iR = bone_index(bones, "uarm_R")
+        pose[iR] = (0.0, 0.0, 0.26)
+    except KeyError:
+        pass
+    return pose
+
+
+def t_pose_wide(bones: List[Bone]):
+    """True T-pose with arms extended horizontally to either side."""
+    pose = [(0.0, 0.0, 0.0)] * len(bones)
+    try:
+        iL = bone_index(bones, "uarm_L")
+        pose[iL] = (0.0, 0.0, -1.45)
+    except KeyError:
+        pass
+    try:
+        iR = bone_index(bones, "uarm_R")
+        pose[iR] = (0.0, 0.0, 1.45)
+    except KeyError:
+        pass
+    return pose
+
+
 # Per-bone biomechanical joint limits (radians). Ranges are (X, Y, Z) = (flex/
 # extension around the bone's local X, internal/external rotation around Y,
 # abduction/adduction around Z). Values are approximations of anatomical ranges

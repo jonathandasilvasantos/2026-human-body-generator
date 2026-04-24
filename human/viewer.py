@@ -12,7 +12,15 @@ from OpenGL.GL import *
 
 from . import animation as anim_mod
 from . import mathx, renderer, skeleton
-from .character import Character, random_appearance
+from .character import Character, random_appearance, reroll_clothes
+
+
+EXPRESSION_CYCLE = [
+    "neutral", "smile", "smile_duchenne", "frown", "sad",
+    "surprise", "fear", "anger", "disgust", "contempt",
+    "squint", "blink", "wink_left", "wink_right",
+    "kiss", "open_mouth", "ee", "oo", "aa",
+]
 from .text_overlay import TextOverlay
 
 
@@ -81,6 +89,8 @@ class Viewer:
 
         self.bvh_animation: anim_mod.Animation | None = None
         self._t_anim = 0.0
+        self._expr_index = 0
+        self._camera_default = (0.0, 0.18, 0.0, 2.7, 0.0, 0.08)
 
         # Animation library: every .bvh under ./animations is cyclable.
         self.anim_paths, self.anim_index = _scan_animations(bvh_path)
@@ -212,13 +222,16 @@ class Viewer:
             self._regenerate_all()
         elif key == glfw.KEY_M:
             self._regenerate_all(gender="male")
-        elif key == glfw.KEY_F:
+        elif key == glfw.KEY_G:
             self._regenerate_all(gender="female")
         elif key == glfw.KEY_S:
             shape = skeleton.random_shape(gender=self.character.shape.gender)
             self.character.set_shape(shape)
         elif key == glfw.KEY_C:
-            self.character.set_appearance(random_appearance(self.character.shape.gender))
+            # C: change only the outfit, keep the same person underneath.
+            new_app = reroll_clothes(self.character.appearance)
+            self.character.set_appearance(new_app)
+            self.character.build_gpu()
         elif key == glfw.KEY_P:
             self.walking = False
             self.character.set_pose(
@@ -226,21 +239,42 @@ class Viewer:
                 root_offset=(0.0, 0.0, 0.0),
             )
         elif key == glfw.KEY_T:
+            # T: true T-pose (arms extended horizontally).
             self.walking = False
+            self.bvh_animation = None
             self.character.set_pose(
-                skeleton.t_pose(len(self.character.bones)),
+                skeleton.t_pose_wide(self.character.bones),
                 root_offset=(0.0, 0.0, 0.0),
             )
+        elif key == glfw.KEY_A:
+            # A: A-pose (arms hanging at natural rest).
+            self.walking = False
+            self.bvh_animation = None
+            self.character.set_pose(
+                skeleton.a_pose(self.character.bones),
+                root_offset=(0.0, 0.0, 0.0),
+            )
+        elif key == glfw.KEY_F:
+            # F: frame the camera on the character's face.
+            self._center_camera_on_face()
+        elif key == glfw.KEY_B:
+            # B: restart initial defaults (fresh character, default camera).
+            self._reset_defaults()
+        elif key == glfw.KEY_LEFT:
+            self._cycle_expression(-1)
+        elif key == glfw.KEY_RIGHT:
+            self._cycle_expression(+1)
         elif key == glfw.KEY_W:
             self.walking = not self.walking
-        elif key == glfw.KEY_A:
-            # Toggle between procedural walk and BVH playback (if a BVH is loaded)
+        elif key == glfw.KEY_K:
+            # K: toggle BVH playback (was A).
             if self.bvh_animation is not None:
                 self.bvh_animation = None
                 print("[bvh] disabled; use procedural walk (W)")
             elif self.bvh_path:
                 self._load_bvh(self.bvh_path)
-        elif key == glfw.KEY_B:
+        elif key == glfw.KEY_N:
+            # N: toggle skeleton overlay (was B).
             self.show_bones = not self.show_bones
         elif key == glfw.KEY_LEFT_BRACKET:
             self.walk_speed = max(0.2, self.walk_speed - 0.3)
@@ -251,6 +285,39 @@ class Viewer:
             self._cycle_animation(+1)
         elif key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
             self._cycle_animation(-1)
+
+    # ---- commands ---------------------------------------------------------
+
+    def _cycle_expression(self, step: int):
+        self._expr_index = (self._expr_index + step) % len(EXPRESSION_CYCLE)
+        name = EXPRESSION_CYCLE[self._expr_index]
+        from dataclasses import replace
+        self.character.set_appearance(
+            replace(self.character.appearance, expression=name))
+        self.character.build_gpu()
+        print(f"[expr] {name}")
+
+    def _center_camera_on_face(self):
+        bone_mats = self.character.bone_matrices()
+        head_pos = self._head_world_pos(bone_mats)
+        self.camera.target = np.array(
+            [head_pos[0], head_pos[1] - 0.05, head_pos[2]], dtype=np.float32)
+        self.camera.dist = 0.55
+        self.camera.yaw = 0.0
+        self.camera.pitch = 0.0
+
+    def _reset_defaults(self):
+        tx, ty, tz, dist, yaw, pitch = self._camera_default
+        self.camera.target = np.array([tx, ty, tz], dtype=np.float32)
+        self.camera.dist = dist
+        self.camera.yaw = yaw
+        self.camera.pitch = pitch
+        self.walking = False
+        self.walk_speed = 2.4
+        self.bvh_animation = None
+        self.show_bones = False
+        self._expr_index = 0
+        self._regenerate_all()
 
     # ---- per frame --------------------------------------------------------
 

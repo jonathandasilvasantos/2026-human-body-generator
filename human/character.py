@@ -7,7 +7,7 @@ GPU mesh paired with a solid base color and a shader mode (0=skin, 1=fabric,
 """
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -135,6 +135,60 @@ class Appearance:
     print_strength: float = 0.0
     stamp_style: int = 0          # 0=none 1=ring 2=diamond 3=cross 4=star
     stamp_strength: float = 0.0
+
+
+def reroll_clothes(app: "Appearance") -> "Appearance":
+    """Return a copy of ``app`` with only clothing (top/bottom/shoes + prints)
+    re-randomized. Skin, hair, face, expression and age are preserved so the
+    character remains visually the same person in new outfits."""
+    gender = app.gender
+    if gender == "female":
+        top_style = random.choices(
+            ["tshirt", "longsleeve", "tank", "dress"],
+            weights=[30, 20, 20, 30])[0]
+    else:
+        top_style = random.choices(
+            ["tshirt", "longsleeve", "tank", "dress"],
+            weights=[50, 35, 15, 0])[0]
+    if top_style == "dress":
+        bottom_style = "none"
+    elif gender == "female":
+        bottom_style = random.choices(
+            ["pants", "shorts", "skirt"], weights=[35, 15, 50])[0]
+    else:
+        bottom_style = random.choices(
+            ["pants", "shorts"], weights=[75, 25])[0]
+    shoe_style = random.choices(
+        ["sneakers", "boots", "barefoot"], weights=[65, 30, 5])[0]
+    top_color    = tuple(random.uniform(0.15, 0.85) for _ in range(3))
+    bottom_color = tuple(random.uniform(0.10, 0.55) for _ in range(3))
+    shoe_color   = tuple(random.uniform(0.05, 0.30) for _ in range(3))
+    if random.random() < 0.55:
+        print_style = random.randint(1, 4)
+        print_strength = random.uniform(0.40, 0.75)
+    else:
+        print_style, print_strength = 0, 0.0
+    if random.random() < 0.40:
+        stamp_style = random.randint(1, 4)
+        stamp_strength = random.uniform(0.65, 0.95)
+    else:
+        stamp_style, stamp_strength = 0, 0.0
+    return replace(
+        app,
+        top_style=top_style, top_color=top_color,
+        top_inflate=random.uniform(0.014, 0.020),
+        top_length_scale=random.uniform(1.00, 1.05),
+        bottom_style=bottom_style, bottom_color=bottom_color,
+        bottom_inflate=random.uniform(0.008, 0.013),
+        bottom_length_scale=random.uniform(0.98, 1.04),
+        skirt_length_frac=random.uniform(0.5, 1.0),
+        skirt_flare=random.uniform(1.15, 1.55),
+        dress_length_frac=random.uniform(0.8, 1.2),
+        dress_flare=random.uniform(1.05, 1.30),
+        shoe_style=shoe_style, shoe_color=shoe_color,
+        print_style=print_style, print_strength=print_strength,
+        stamp_style=stamp_style, stamp_strength=stamp_strength,
+    )
 
 
 def random_appearance(gender: str) -> Appearance:
