@@ -13,3 +13,5 @@ screenshot_*.png
 .pytest_cache/
 .ruff_cache/
 *.swp
+screenshots/baseline/
+screenshots/cycle*/
