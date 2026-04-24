@@ -363,13 +363,89 @@ def run_narrative(args, fbo_ms, fbo_res, skin_prog):
     return n
 
 
+def run_crossvalidate(args, fbo_ms, fbo_res, skin_prog):
+    """Apply the FACS expression set to a sweep of randomly-generated
+    characters (genders / ages / skin tones / hair) to confirm the rig
+    works without per-character tuning.
+
+    Layout: one image per random character; columns are expressions.
+    """
+    from human.character import random_appearance
+    proj = mathx.perspective(math.radians(30),
+                             args.width / max(args.height, 1), 0.05, 20.0)
+    expressions = ["neutral", "smile_duchenne", "surprise", "anger",
+                   "disgust", "contempt"]
+    seeds = list(range(1000, 1006))
+    n = 0
+    for seed in seeds:
+        random.seed(seed)
+        gender = random.choice(["male", "female"])
+        shape = skeleton.random_shape(gender=gender)
+        # Pull a randomized appearance, then *override* expression below.
+        random.seed(seed + 1)
+        app = random_appearance(gender)
+        app.seed = seed / 10000.0
+        row = []
+        for expr in expressions:
+            app.expression = expr
+            app.blendshapes = None
+            ch = Character(shape=shape, appearance=app)
+            ch.build_gpu()
+            ch.set_pose(skeleton.t_pose(len(ch.bones)))
+            target = _head_target(ch)
+            view = _view(target, math.radians(20), dist=0.42)
+            img = _draw_to_array(ch, proj, view, args.width, args.height,
+                                 fbo_ms, fbo_res, skin_prog)
+            row.append(img)
+            ch.delete()
+            n += 1
+        strip = np.concatenate(row, axis=1)
+        out = os.path.join(args.out,
+                           f"{args.tag}_seed{seed}_{gender}_xchar.png")
+        _save(strip, out)
+        print(f"  xchar seed{seed} ({gender})")
+    return n
+
+
+def run_with_pose(args, fbo_ms, fbo_res, skin_prog):
+    """Confirm facial weights compose with body animation. Walks the
+    character one step while applying surprise + look_left, captures
+    head close-ups."""
+    proj = mathx.perspective(math.radians(30),
+                             args.width / max(args.height, 1), 0.05, 20.0)
+    n = 0
+    weights = face_anim.preset_weights("surprise")
+    weights["eyeLookOutLeft"] = 0.7
+    weights["eyeLookInRight"] = 0.7
+    for preset in CHAR_PRESETS[:2]:
+        ch = _make_character(preset, expression="neutral", blendshapes=weights)
+        row = []
+        for fi in range(6):
+            t = fi * 0.18
+            pose, root = skeleton.walk_pose(ch.bones, t=t, speed=2.2)
+            ch.set_pose(pose, root_offset=(0.0, root[1], 0.0))
+            target = _head_target(ch)
+            view = _view(target, 0.0, dist=0.55)
+            img = _draw_to_array(ch, proj, view, args.width, args.height,
+                                 fbo_ms, fbo_res, skin_prog)
+            row.append(img)
+        ch.delete()
+        strip = np.concatenate(row, axis=1)
+        out = os.path.join(args.out, f"{args.tag}_{preset['label']}_walk_face.png")
+        _save(strip, out)
+        n += 1
+        print(f"  walk+face {preset['label']}")
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="screenshots/face_anim")
     ap.add_argument("--tag", default="anim")
     ap.add_argument("--matrix",
                     choices=["presets", "clips", "channels", "asymmetry",
-                             "narrative", "all"],
+                             "narrative", "crossvalidate", "with_pose",
+                             "all"],
                     default="presets")
     ap.add_argument("--width",  type=int, default=512)
     ap.add_argument("--height", type=int, default=600)
@@ -389,6 +465,10 @@ def main():
         total += run_asymmetry(args, fbo_ms, fbo_res, skin_prog)
     if args.matrix in ("narrative", "all"):
         total += run_narrative(args, fbo_ms, fbo_res, skin_prog)
+    if args.matrix in ("crossvalidate", "all"):
+        total += run_crossvalidate(args, fbo_ms, fbo_res, skin_prog)
+    if args.matrix in ("with_pose", "all"):
+        total += run_with_pose(args, fbo_ms, fbo_res, skin_prog)
 
     glfw.terminate()
     print(f"done: {total} frames -> {args.out}")
