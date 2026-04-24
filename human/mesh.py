@@ -552,7 +552,8 @@ def build(bones, shape=None) -> SkinnedMesh:
         head_parent = bones[head_idx][1]
         head_tip = np.asarray(bones[head_idx][3], dtype=np.float32)
         head_r = bones[head_idx][4]
-        chunks.extend(_head_compound(head_idx, head_parent, head_tip, head_r, gender))
+        chunks.extend(_head_compound(head_idx, head_parent, head_tip, head_r,
+                                     gender, shape))
 
     if shape is not None and getattr(shape, "bust", 0.0) > 0.01 and chest_idx >= 0:
         chunks.extend(_bust(chest_idx, bones[chest_idx], shape.bust,
@@ -587,7 +588,7 @@ H_TOP       = 1.00
 
 
 def _skull_shell(cy, half_h, profile, bone_index, parent_index,
-                 rings=28, radial=32, weight_self=1.0):
+                 rings=28, radial=32, weight_self=1.0, asymmetry=0.0):
     """Single closed mesh for a skull/face shell.
 
     Cross-section at height-parameter ``t`` in [-1, 1] (chin -> crown) is
@@ -621,7 +622,15 @@ def _skull_shell(cy, half_h, profile, bone_index, parent_index,
             blend = 0.5 * (1.0 + sp)        # 0 at back pole, 1 at front pole
             blend_s = blend * blend * (3 - 2 * blend)
             rz = rz_b + (rz_f - rz_b) * blend_s
-            px = st * cp * rx
+            # Subtle left/right asymmetry -- peaks in the face band (t near
+            # the cheekbone/eye line) and fades toward chin and crown so the
+            # skull silhouette stays plausible.
+            if asymmetry != 0.0:
+                face_band = max(0.0, 1.0 - abs(t - 0.1) * 2.2)
+                rx_eff = rx * (1.0 + asymmetry * cp * face_band)
+            else:
+                rx_eff = rx
+            px = st * cp * rx_eff
             py = cy + t * half_h
             pz = st * sp * rz + cz
             v.append((px, py, pz))
@@ -654,7 +663,7 @@ def _skull_shell(cy, half_h, profile, bone_index, parent_index,
             np.asarray(w, np.float32), np.asarray(idx, np.uint32))
 
 
-def _head_compound(head_idx, parent_idx, tip, radius, gender):
+def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     """Build a compound head with anthropometrically proportioned features.
 
     The head bone's local +Y points from the neck joint to the top of the
@@ -731,9 +740,11 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender):
     # Skull spans from chin (y=length*H_CHIN) to crown (y=length*H_TOP).
     skull_cy = length * (H_TOP + H_CHIN) * 0.5
     skull_half = length * (H_TOP - H_CHIN) * 0.5
+    face_asym = _shape_trait(shape, "face_asymmetry", 0.0)
     chunks.append(_skull_shell(
         skull_cy, skull_half, profile,
         head_idx, parent_idx, rings=32, radial=40, weight_self=1.0,
+        asymmetry=face_asym,
     ))
 
     # Chin protuberance is carried by the skull shell profile (forward cz
@@ -957,8 +968,19 @@ def _glutes(pelvis_idx, pelvis_bone, hip_w, lower_bulk=1.0):
 
 # --- eyes --------------------------------------------------------------------
 
-def _head_info(bones):
-    """Shared helper: head bone index, parent, rest rotation, length, depth."""
+def _shape_trait(shape, name, default=1.0):
+    """Read an optional numeric knob off the Shape; fall back when absent."""
+    if shape is None:
+        return default
+    return float(getattr(shape, name, default))
+
+
+def _head_info(bones, shape=None):
+    """Shared helper: head bone index, parent, rest rotation, length, depth.
+
+    When ``shape`` is provided the head width picks up the gender bias so
+    feature primitives line up with the gender-dimorphic skull shell.
+    """
     head_idx = _find(bones, "head")
     if head_idx < 0:
         return None
@@ -967,13 +989,14 @@ def _head_info(bones):
     r = bones[head_idx][4]
     R = mathx.align_y_to(tip)
     length = float(np.linalg.norm(tip))
+    gender = getattr(shape, "gender", "neutral") if shape is not None else "neutral"
     head_d = length * 0.40
-    head_w = length * 0.34
+    head_w = length * 0.34 * (1.06 if gender == "male" else 0.98)
     return head_idx, parent, R, length, r, head_w, head_d
 
 
-def build_eyes(bones) -> SkinnedMesh:
-    info = _head_info(bones)
+def build_eyes(bones, shape=None) -> SkinnedMesh:
+    info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
@@ -994,8 +1017,8 @@ def build_eyes(bones) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_iris(bones) -> SkinnedMesh:
-    info = _head_info(bones)
+def build_iris(bones, shape=None) -> SkinnedMesh:
+    info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
@@ -1017,9 +1040,9 @@ def build_iris(bones) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_pupils(bones) -> SkinnedMesh:
+def build_pupils(bones, shape=None) -> SkinnedMesh:
     """Small dark pupil in the centre of each iris."""
-    info = _head_info(bones)
+    info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
@@ -1040,13 +1063,15 @@ def build_pupils(bones) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_eyelids(bones) -> SkinnedMesh:
+def build_eyelids(bones, shape=None, expression="neutral") -> SkinnedMesh:
     """Skin-colored upper/lower eyelid folds that mask the spherical eyeballs.
 
     This keeps the existing simple eye spheres, but exposes them through a
-    narrower almond aperture instead of showing full round balls.
+    narrower almond aperture instead of showing full round balls. The
+    aperture is widened or narrowed according to ``expression`` so squints
+    and surprise read at the eye level as well as the mouth level.
     """
-    info = _head_info(bones)
+    info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
@@ -1060,10 +1085,15 @@ def build_eyelids(bones) -> SkinnedMesh:
     # tilts outward-up for an almond shape; lower lid is thinner.
     lid_z = z + eye_r * 0.96
     hx = length * 0.068
-    upper_hy = length * 0.022
+    upper_hy = length * (0.022 if expression != "surprised" else 0.016)
     lower_hy = length * 0.012
-    upper_y = y + eye_r * 0.70
-    lower_y = y - eye_r * 0.60
+    aperture = 1.0
+    if expression == "squint":
+        aperture = 0.62
+    elif expression == "surprised":
+        aperture = 1.22
+    upper_y = y + eye_r * (0.70 * aperture)
+    lower_y = y - eye_r * (0.60 * aperture)
 
     chunks = []
     for side in (+1.0, -1.0):
@@ -1090,26 +1120,38 @@ def build_eyelids(bones) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_lips(bones) -> SkinnedMesh:
-    """Upper + lower lip with a subtle cupid's bow.
+def build_lips(bones, shape=None, expression="neutral") -> SkinnedMesh:
+    """Upper + lower lip with a subtle cupid's bow and expression offsets.
 
     Upper lip is built from two halves (left + right peak) with a small
     central dip between them, giving a readable cupid's bow. The lower
-    lip is a single fuller pillow.
+    lip is a single fuller pillow. ``expression`` slides the mouth corners
+    up (smile) or down (frown), and separates the lips vertically when
+    ``surprised`` so the mouth reads as open.
     """
-    info = _head_info(bones)
+    info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
     y_mouth = length * H_MOUTH
     z = head_d * 0.86
+    fullness = _shape_trait(shape, "lip_fullness", 1.0)
+
+    corner_lift = 0.0
+    mouth_open = 0.0
+    if expression == "smile":
+        corner_lift = length * 0.014
+    elif expression == "frown":
+        corner_lift = -length * 0.012
+    elif expression == "surprised":
+        mouth_open = length * 0.014
 
     # Upper lip: two symmetric lobes, narrow, peaked slightly off-center.
     up_half_sep = length * 0.028
     up_rx = length * 0.048
-    up_ry = length * 0.011
-    up_rz = length * 0.014
-    up_y = y_mouth + length * 0.010
+    up_ry = length * 0.011 * fullness
+    up_rz = length * 0.014 * fullness
+    up_y = y_mouth + length * 0.010 + mouth_open * 0.35
     upper_L = prim.ellipsoid(
         (+up_half_sep, up_y, z),
         (up_rx, up_ry, up_rz),
@@ -1120,28 +1162,75 @@ def build_lips(bones) -> SkinnedMesh:
         (up_rx, up_ry, up_rz),
         head_idx, parent, rings=6, radial=14,
     )
-    # Mouth corners (tucked slightly back so they don't pop out).
+    # Mouth corners -- slide up/down with smile/frown.
     corner_rx = length * 0.014
     corner_ry = length * 0.010
     corner_rz = length * 0.010
     corner_x = length * 0.075
+    corner_y = y_mouth + length * 0.001 + corner_lift
     corner_L = prim.ellipsoid(
-        (+corner_x, y_mouth + length * 0.001, z - length * 0.003),
+        (+corner_x, corner_y, z - length * 0.003),
         (corner_rx, corner_ry, corner_rz),
         head_idx, parent, rings=5, radial=10,
     )
     corner_R = prim.ellipsoid(
-        (-corner_x, y_mouth + length * 0.001, z - length * 0.003),
+        (-corner_x, corner_y, z - length * 0.003),
         (corner_rx, corner_ry, corner_rz),
         head_idx, parent, rings=5, radial=10,
     )
-    # Lower lip: wider, fuller pillow.
+    # Lower lip: wider, fuller pillow. Pushed further down when surprised.
     lower = prim.ellipsoid(
-        (0.0, y_mouth - length * 0.010, z + length * 0.002),
-        (length * 0.082, length * 0.014, length * 0.016),
+        (0.0, y_mouth - length * 0.010 - mouth_open * 0.65, z + length * 0.002),
+        (length * 0.082, length * 0.014 * fullness, length * 0.016 * fullness),
         head_idx, parent, rings=6, radial=20,
     )
     chunks = [upper_L, upper_R, corner_L, corner_R, lower]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_age_detail(bones, shape=None, age_group="adult") -> SkinnedMesh:
+    """Subtle forehead, nasolabial and eye-corner creases for mature faces.
+
+    Rendered as very thin flat patches laid over the skull/face surface.
+    Returns an empty mesh for ``young`` faces so young characters stay
+    smooth. ``strength`` scales the crease thickness with age group.
+    """
+    if age_group not in ("adult", "elder"):
+        return _empty_mesh()
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, head_w, head_d = info
+    strength = 1.0 if age_group == "elder" else 0.45
+    z = head_d * 0.93
+    chunks = []
+
+    # Forehead: three horizontal creases spread across the brow band.
+    for off in (0.0, -0.030, -0.060):
+        chunks.append(prim.flat_patch(
+            (0.0, length * (H_BROW + 0.080 + off), z),
+            (head_w * 0.25, length * 0.0023 * strength),
+            head_idx, parent, normal=(0, 0.05, 1),
+            subdiv=(8, 1), thickness=0.0012,
+        ))
+
+    # Eye-corner crows'-feet and nasolabial fold, mirrored L/R.
+    for side in (+1.0, -1.0):
+        chunks.append(prim.flat_patch(
+            (side * head_w * 0.38, length * (H_EYE - 0.010), head_d * 0.91),
+            (length * 0.030, length * 0.0045 * strength),
+            head_idx, parent, normal=(side * 0.18, 0.00, 1),
+            subdiv=(4, 1), thickness=0.0012,
+        ))
+        chunks.append(prim.flat_patch(
+            (side * head_w * 0.20, length * (H_NOSE_BASE + 0.015), head_d * 0.88),
+            (length * 0.006 * strength, length * 0.048),
+            head_idx, parent, normal=(side * 0.12, -0.08, 1),
+            subdiv=(1, 5), thickness=0.0011,
+        ))
+
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
