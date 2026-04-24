@@ -356,8 +356,10 @@ class Character:
             app.lip_color, 0)
 
         # Age-dependent creases (forehead / nasolabial / crows'-feet). No-op
-        # for young faces. Darker than skin so they read as folds, not marks.
-        crease = tuple(min(1.0, c * 0.55) for c in app.skin_color)
+        # for young faces. Keep them close to skin tone: under the surface
+        # shader they should read as shallow folds, not painted black decals.
+        crease_mul = 0.76 if app.age_group == "elder" else 0.88
+        crease = tuple(min(1.0, c * crease_mul) for c in app.skin_color)
         add(mesh_mod.build_age_detail(self.bones, self.shape, app.age_group),
             crease, 0)
 

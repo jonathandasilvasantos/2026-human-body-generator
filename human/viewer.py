@@ -286,6 +286,7 @@ class Viewer:
         renderer.upload_bones(self.skin_prog.u_bones, bone_mats)
         app = self.character.appearance
         glUniform1f(self.skin_prog.u_seed, float(app.seed))
+        glUniform1i(self.skin_prog.u_light_style, 0)
         glUniform1i(self.skin_prog.u_print_style, int(app.print_style))
         glUniform1f(self.skin_prog.u_print_strength, float(app.print_strength))
         glUniform1i(self.skin_prog.u_stamp_style, int(app.stamp_style))

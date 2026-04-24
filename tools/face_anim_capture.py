@@ -71,6 +71,13 @@ ANGLES = [
     ("threeq", math.radians(32)),
 ]
 
+LIGHTING_STYLES = {
+    "portrait": 0,
+    "soft": 1,
+    "raking": 2,
+    "warmcool": 3,
+}
+
 
 def _make_character(preset, expression=None, blendshapes=None) -> Character:
     random.seed(preset["seed"])
@@ -131,7 +138,8 @@ def _setup_gl(width, height):
     return win, fbo_ms, fbo_res, skin_prog
 
 
-def _draw_to_array(ch, proj, view, width, height, fbo_ms, fbo_res, skin_prog):
+def _draw_to_array(ch, proj, view, width, height, fbo_ms, fbo_res, skin_prog,
+                   light_style=0):
     app = ch.appearance
     bone_mats = ch.bone_matrices()
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_ms)
@@ -142,6 +150,8 @@ def _draw_to_array(ch, proj, view, width, height, fbo_ms, fbo_res, skin_prog):
     glUniformMatrix4fv(skin_prog.u_view, 1, GL_TRUE, view)
     renderer.upload_bones(skin_prog.u_bones, bone_mats)
     glUniform1f(skin_prog.u_seed, float(app.seed))
+    if hasattr(skin_prog, "u_light_style"):
+        glUniform1i(skin_prog.u_light_style, int(light_style))
     if hasattr(skin_prog, "u_print_style"):
         glUniform1i(skin_prog.u_print_style, int(app.print_style))
         glUniform1f(skin_prog.u_print_strength, float(app.print_strength))
@@ -171,20 +181,24 @@ def run_presets(args, fbo_ms, fbo_res, skin_prog):
     proj = mathx.perspective(math.radians(30),
                              args.width / max(args.height, 1), 0.05, 20.0)
     n = 0
+    light_items = _lighting_items(args)
     for preset in CHAR_PRESETS:
         for expr in EXPRESSIONS:
             ch = _make_character(preset, expression=expr)
             target = _head_target(ch)
-            for angle_label, yaw in ANGLES:
-                view = _view(target, yaw, dist=0.42)
-                img = _draw_to_array(ch, proj, view, args.width, args.height,
-                                     fbo_ms, fbo_res, skin_prog)
-                out = os.path.join(
-                    args.out,
-                    f"{args.tag}_{preset['label']}_{expr}_{angle_label}.png",
-                )
-                _save(img, out)
-                n += 1
+            for light_label, light_id in light_items:
+                for angle_label, yaw in ANGLES:
+                    view = _view(target, yaw, dist=0.42)
+                    img = _draw_to_array(ch, proj, view, args.width, args.height,
+                                         fbo_ms, fbo_res, skin_prog,
+                                         light_style=light_id)
+                    light_suffix = f"_{light_label}" if len(light_items) > 1 else ""
+                    out = os.path.join(
+                        args.out,
+                        f"{args.tag}_{preset['label']}_{expr}_{angle_label}{light_suffix}.png",
+                    )
+                    _save(img, out)
+                    n += 1
             ch.delete()
             print(f"  preset {preset['label']} {expr}")
     return n
@@ -218,7 +232,8 @@ def run_clips(args, fbo_ms, fbo_res, skin_prog):
                 view = _view(target, 0.0, dist=0.42)
                 img = _draw_to_array(ch, proj, view,
                                      args.width, args.height,
-                                     fbo_ms, fbo_res, skin_prog)
+                                     fbo_ms, fbo_res, skin_prog,
+                                     light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
                 tiles.append(img)
                 ch.delete()
             strip = np.concatenate(tiles, axis=1)
@@ -262,7 +277,8 @@ def run_channels(args, fbo_ms, fbo_res, skin_prog):
             target = _head_target(ch)
             view = _view(target, 0.0, dist=0.42)
             img = _draw_to_array(ch, proj, view, args.width, args.height,
-                                 fbo_ms, fbo_res, skin_prog)
+                                 fbo_ms, fbo_res, skin_prog,
+                                 light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
             rows.append(img)
             ch.delete()
             n += 1
@@ -316,7 +332,8 @@ def run_asymmetry(args, fbo_ms, fbo_res, skin_prog):
             target = _head_target(ch)
             view = _view(target, 0.0, dist=0.40)
             img = _draw_to_array(ch, proj, view, args.width, args.height,
-                                 fbo_ms, fbo_res, skin_prog)
+                                 fbo_ms, fbo_res, skin_prog,
+                                 light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
             row.append(img)
             ch.delete()
             n += 1
@@ -352,7 +369,8 @@ def run_narrative(args, fbo_ms, fbo_res, skin_prog):
             view = _view(target, 0.0, dist=0.42)
             img = _draw_to_array(ch, proj, view,
                                  args.width, args.height,
-                                 fbo_ms, fbo_res, skin_prog)
+                                 fbo_ms, fbo_res, skin_prog,
+                                 light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
             row.append(img)
             ch.delete()
         strip = np.concatenate(row, axis=1)
@@ -395,7 +413,8 @@ def run_crossvalidate(args, fbo_ms, fbo_res, skin_prog):
             target = _head_target(ch)
             view = _view(target, math.radians(20), dist=0.42)
             img = _draw_to_array(ch, proj, view, args.width, args.height,
-                                 fbo_ms, fbo_res, skin_prog)
+                                 fbo_ms, fbo_res, skin_prog,
+                                 light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
             row.append(img)
             ch.delete()
             n += 1
@@ -427,7 +446,8 @@ def run_with_pose(args, fbo_ms, fbo_res, skin_prog):
             target = _head_target(ch)
             view = _view(target, 0.0, dist=0.55)
             img = _draw_to_array(ch, proj, view, args.width, args.height,
-                                 fbo_ms, fbo_res, skin_prog)
+                                 fbo_ms, fbo_res, skin_prog,
+                                 light_style=LIGHTING_STYLES[args.lighting if args.lighting != "all" else "portrait"])
             row.append(img)
         ch.delete()
         strip = np.concatenate(row, axis=1)
@@ -436,6 +456,12 @@ def run_with_pose(args, fbo_ms, fbo_res, skin_prog):
         n += 1
         print(f"  walk+face {preset['label']}")
     return n
+
+
+def _lighting_items(args):
+    if args.lighting == "all":
+        return list(LIGHTING_STYLES.items())
+    return [(args.lighting, LIGHTING_STYLES[args.lighting])]
 
 
 def main():
@@ -449,6 +475,9 @@ def main():
                     default="presets")
     ap.add_argument("--width",  type=int, default=512)
     ap.add_argument("--height", type=int, default=600)
+    ap.add_argument("--lighting",
+                    choices=list(LIGHTING_STYLES.keys()) + ["all"],
+                    default="portrait")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)

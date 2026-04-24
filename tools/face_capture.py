@@ -86,6 +86,13 @@ PRESET_POSES = [
     ("wave", "bandai/dataset-2_wave-both-hands_normal_001.bvh", 1.05),
 ]
 
+LIGHTING_STYLES = {
+    "portrait": 0,
+    "soft": 1,
+    "raking": 2,
+    "warmcool": 3,
+}
+
 PRESETS = [
     dict(
         label="young_female_smile", gender="female",
@@ -181,7 +188,7 @@ def _setup_gl(width, height):
 
 
 def _draw_and_save(character, proj, view, width, height, fbo_ms, fbo_res,
-                   skin_prog, out_path):
+                   skin_prog, out_path, light_style=0):
     app = character.appearance
     bone_mats = character.bone_matrices()
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_ms)
@@ -192,6 +199,8 @@ def _draw_and_save(character, proj, view, width, height, fbo_ms, fbo_res,
     glUniformMatrix4fv(skin_prog.u_view, 1, GL_TRUE, view)
     renderer.upload_bones(skin_prog.u_bones, bone_mats)
     glUniform1f(skin_prog.u_seed, float(app.seed))
+    if hasattr(skin_prog, "u_light_style"):
+        glUniform1i(skin_prog.u_light_style, int(light_style))
     if hasattr(skin_prog, "u_print_style"):
         glUniform1i(skin_prog.u_print_style, int(app.print_style))
         glUniform1f(skin_prog.u_print_strength, float(app.print_strength))
@@ -218,6 +227,7 @@ def run_grid(args, fbo_ms, fbo_res, skin_prog):
     proj = mathx.perspective(math.radians(30),
                              args.width / max(args.height, 1), 0.05, 20.0)
     genders = [g.strip() for g in args.genders.split(",") if g.strip()]
+    light_items = _lighting_items(args)
     wrote = 0
     for gender in genders:
         for s in range(args.seeds):
@@ -229,14 +239,17 @@ def run_grid(args, fbo_ms, fbo_res, skin_prog):
             character.build_gpu()
             character.set_pose(skeleton.t_pose(len(character.bones)))
             head_pos = _head_world_pos(character)
-            for view_name, yaw, pitch in GRID_VIEWS:
-                view = _face_view(head_pos, yaw, pitch)
-                out_name = f"{args.tag}_{gender}_seed{s}_{view_name}.png"
-                _draw_and_save(character, proj, view,
-                               args.width, args.height,
-                               fbo_ms, fbo_res, skin_prog,
-                               os.path.join(args.out, out_name))
-                wrote += 1
+            for light_label, light_id in light_items:
+                for view_name, yaw, pitch in GRID_VIEWS:
+                    view = _face_view(head_pos, yaw, pitch)
+                    light_suffix = f"_{light_label}" if len(light_items) > 1 else ""
+                    out_name = f"{args.tag}_{gender}_seed{s}_{view_name}{light_suffix}.png"
+                    _draw_and_save(character, proj, view,
+                                   args.width, args.height,
+                                   fbo_ms, fbo_res, skin_prog,
+                                   os.path.join(args.out, out_name),
+                                   light_style=light_id)
+                    wrote += 1
             character.delete()
             print(f"  grid done {gender} seed{s}")
     return wrote
@@ -245,6 +258,7 @@ def run_grid(args, fbo_ms, fbo_res, skin_prog):
 def run_presets(args, fbo_ms, fbo_res, skin_prog):
     proj = mathx.perspective(math.radians(32),
                              args.width / max(args.height, 1), 0.1, 50.0)
+    light_items = _lighting_items(args)
     wrote = 0
     for pi, preset in enumerate(PRESETS):
         seed = 300 + pi * 37
@@ -270,18 +284,27 @@ def run_presets(args, fbo_ms, fbo_res, skin_prog):
 
             bone_mats = character.bone_matrices()
             target = _head_target_pose(character, bone_mats)
-            for angle_label, yaw in PRESET_ANGLES:
-                view = _face_view(target, yaw, 0.0, dist=0.50)
-                out_name = (f"{args.tag}_{preset['label']}_"
-                            f"{pose_label}_{angle_label}.png")
-                _draw_and_save(character, proj, view,
-                               args.width, args.height,
-                               fbo_ms, fbo_res, skin_prog,
-                               os.path.join(args.out, out_name))
-                wrote += 1
-                print(f"  preset wrote {out_name}")
+            for light_label, light_id in light_items:
+                for angle_label, yaw in PRESET_ANGLES:
+                    view = _face_view(target, yaw, 0.0, dist=0.50)
+                    light_suffix = f"_{light_label}" if len(light_items) > 1 else ""
+                    out_name = (f"{args.tag}_{preset['label']}_"
+                                f"{pose_label}_{angle_label}{light_suffix}.png")
+                    _draw_and_save(character, proj, view,
+                                   args.width, args.height,
+                                   fbo_ms, fbo_res, skin_prog,
+                                   os.path.join(args.out, out_name),
+                                   light_style=light_id)
+                    wrote += 1
+                    print(f"  preset wrote {out_name}")
         character.delete()
     return wrote
+
+
+def _lighting_items(args):
+    if args.lighting == "all":
+        return list(LIGHTING_STYLES.items())
+    return [(args.lighting, LIGHTING_STYLES[args.lighting])]
 
 
 def main():
@@ -296,6 +319,10 @@ def main():
                     help="grid matrix: comma-separated genders")
     ap.add_argument("--width", type=int, default=720)
     ap.add_argument("--height", type=int, default=800)
+    ap.add_argument("--lighting",
+                    choices=list(LIGHTING_STYLES.keys()) + ["all"],
+                    default="portrait",
+                    help="lighting preset for surface inspection")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)

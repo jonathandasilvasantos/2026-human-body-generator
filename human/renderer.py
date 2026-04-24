@@ -20,6 +20,7 @@ uniform mat4 u_bones[""" + str(MAX_BONES) + """];
 
 out vec3 v_nrm;
 out vec3 v_pos;
+out vec3 v_local;
 
 void main() {
     mat4 M = u_bones[a_bones.x] * a_weights.x + u_bones[a_bones.y] * a_weights.y;
@@ -27,6 +28,7 @@ void main() {
     gl_Position = u_proj * u_view * p;
     v_pos = p.xyz;
     v_nrm = mat3(M) * a_nrm;
+    v_local = a_pos;
 }
 """
 
@@ -34,11 +36,13 @@ SKIN_FRAG = """
 #version 330 core
 in vec3 v_nrm;
 in vec3 v_pos;
+in vec3 v_local;
 out vec4 frag;
 
 uniform vec3  u_color;
 uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye, 4 = shoe
 uniform float u_seed;   // per-character random seed in [0,1]
+uniform int   u_light_style; // 0=portrait 1=soft 2=raking 3=warm/cool
 // Clothing pattern controls (per-character; Python-driven for guaranteed
 // variety instead of hash-gated). 0 means "no effect".
 uniform int   u_print_style;    // 0=none 1=stripes 2=dots 3=plaid 4=noise
@@ -87,6 +91,40 @@ float fbm(vec3 p) {
     return sum / norm;
 }
 
+float ellipse_mask(vec2 p, vec2 center, vec2 radius) {
+    vec2 q = (p - center) / radius;
+    return 1.0 - smoothstep(0.55, 1.0, dot(q, q));
+}
+
+float skin_height(vec3 p, float front_gate) {
+    vec3 q = p + vec3(u_seed * 19.0, u_seed * 31.0, u_seed * 47.0);
+    float pores_a = fbm(q * 155.0);
+    float pores_b = fbm(q * 315.0 + vec3(7.0, 3.0, 11.0));
+    float pore_pits = smoothstep(0.56, 0.86, pores_b);
+    float fine = (pores_a - 0.5) * 0.0011 - pore_pits * 0.0015;
+
+    float horizontal = 0.5 + 0.5 * cos((p.y * 125.0)
+        + fbm(q * 18.0) * 2.8);
+    float forehead = ellipse_mask(p.xy, vec2(0.0, 0.155), vec2(0.095, 0.040));
+    float crow_l = ellipse_mask(p.xy, vec2(-0.060, 0.130), vec2(0.032, 0.030));
+    float crow_r = ellipse_mask(p.xy, vec2( 0.060, 0.130), vec2(0.032, 0.030));
+    float meso = smoothstep(0.74, 0.96, horizontal)
+        * max(forehead, max(crow_l, crow_r)) * front_gate * -0.0022;
+    return fine + meso;
+}
+
+vec3 perturb_skin_normal(vec3 n, vec3 p, float front_gate) {
+    float h = skin_height(p, front_gate);
+    float hx = dFdx(h);
+    float hy = dFdy(h);
+    vec3 sx = dFdx(v_pos);
+    vec3 sy = dFdy(v_pos);
+    vec3 tx = normalize(sx - n * dot(sx, n));
+    vec3 ty = normalize(sy - n * dot(sy, n));
+    vec3 bumped = normalize(n - 55.0 * (hx * tx + hy * ty));
+    return normalize(mix(n, bumped, 0.70 + 0.20 * front_gate));
+}
+
 float circle_tile(vec2 uv, float r) {
     vec2 p = fract(uv) - 0.5;
     return 1.0 - smoothstep(r, r + 0.035, length(p));
@@ -97,28 +135,59 @@ float diamond(vec2 uv, float r) {
 }
 
 void main() {
-    vec3 n = normalize(v_nrm);
-    vec3 sample_p = v_pos + vec3(u_seed * 37.0, u_seed * 13.0, u_seed * 91.0);
+    vec3 n_base = normalize(v_nrm);
+    vec3 n = n_base;
+    vec3 sample_p = v_local + vec3(u_seed * 37.0, u_seed * 13.0, u_seed * 91.0);
 
     vec3 albedo = u_color;
+    float skin_front = smoothstep(0.005, 0.055, v_local.z)
+        * (1.0 - smoothstep(0.145, 0.210, abs(v_local.x)))
+        * smoothstep(0.000, 0.040, v_local.y)
+        * (1.0 - smoothstep(0.245, 0.340, v_local.y));
+    float skin_micro = 0.0;
 
     if (u_mode == 0) {
-        // BIOPHYSICAL-INSPIRED SKIN (melanin + hemoglobin + pores):
-        //   1) Low-freq melanin modulation darkens/lightens broad regions.
-        //   2) Mid-freq hemoglobin patches add warm red-ish tint.
-        //   3) High-freq fBm simulates pores without harsh speckle.
-        //   4) Cavity tint warms downward-facing concave regions (thin skin).
-        // Ref: Alotaibi & Smith, "A Biophysical 3D Morphable Model of Face
-        //      Appearance" (ICCV 2017); Smith et al., Morphable Face Albedo
-        //      Model (CVPR 2020); NVIDIA GPU Gems 3 subsurface chapter.
-        float melanin = fbm(sample_p * 1.1) - 0.5;
-        albedo *= exp2(melanin * 0.35);
-        float hemo = smoothstep(0.35, 0.75, fbm(sample_p * 2.2 + vec3(5.0)));
-        albedo = mix(albedo, albedo * vec3(1.12, 0.86, 0.84), hemo * 0.35);
-        float pores = fbm(sample_p * 38.0);
-        albedo *= 0.96 + 0.06 * pores;
-        float cavity = clamp(-n.y * 0.5 + 0.5, 0.0, 1.0);
-        albedo = mix(albedo, albedo * vec3(1.05, 0.90, 0.88), 0.12 * cavity);
+        // BIOPHYSICAL-INSPIRED SKIN:
+        // 1) stable local-space pseudo-UVs so texture does not swim during
+        //    facial/body animation;
+        // 2) broad melanin/undertone variation plus regional hemoglobin;
+        // 3) pores and shallow meso folds through normal perturbation;
+        // 4) roughness/spec response coupled to the microstructure.
+        n = perturb_skin_normal(n_base, v_local, skin_front);
+
+        float melanin = fbm(sample_p * 4.0) - 0.5;
+        float undertone = fbm(sample_p * vec3(2.0, 5.0, 3.0) + vec3(5.0)) - 0.5;
+        albedo *= exp2(melanin * 0.30);
+        albedo = mix(albedo, albedo * vec3(1.035, 0.985, 0.945),
+                     clamp(undertone * 0.5 + 0.5, 0.0, 1.0) * 0.20);
+
+        vec2 face_xy = v_local.xy;
+        float cheek = max(
+            ellipse_mask(face_xy, vec2(-0.047, 0.105), vec2(0.045, 0.046)),
+            ellipse_mask(face_xy, vec2( 0.047, 0.105), vec2(0.045, 0.046))
+        );
+        float nose = ellipse_mask(face_xy, vec2(0.000, 0.112), vec2(0.030, 0.055));
+        float eyelid = max(
+            ellipse_mask(face_xy, vec2(-0.046, 0.134), vec2(0.035, 0.020)),
+            ellipse_mask(face_xy, vec2( 0.046, 0.134), vec2(0.035, 0.020))
+        );
+        float mouth = ellipse_mask(face_xy, vec2(0.000, 0.070), vec2(0.060, 0.020));
+        float hemo_patch = clamp(cheek * 0.42 + nose * 0.30
+            + eyelid * 0.22 + mouth * 0.18, 0.0, 1.0) * skin_front;
+        float hemo_noise = smoothstep(0.25, 0.88,
+            fbm(sample_p * 24.0 + vec3(1.0, 4.0, 9.0)));
+        albedo = mix(albedo, albedo * vec3(1.13, 0.86, 0.82),
+                     hemo_patch * (0.55 + 0.45 * hemo_noise));
+
+        float freckle_n = fbm(sample_p * 74.0 + vec3(11.0, 2.0, 5.0));
+        float freckles = smoothstep(0.82, 0.96, freckle_n) * skin_front;
+        albedo = mix(albedo, albedo * vec3(0.70, 0.48, 0.36), freckles * 0.28);
+
+        float pores = fbm(sample_p * 180.0);
+        skin_micro = pores;
+        albedo *= 0.985 + 0.035 * pores;
+        float cavity = clamp(-n_base.y * 0.5 + 0.5, 0.0, 1.0);
+        albedo = mix(albedo, albedo * vec3(1.04, 0.91, 0.88), 0.10 * cavity);
     } else if (u_mode == 1) {
         // FABRIC: interlaced yarns, dye variation, and broad compression
         // folds. This approximates pattern/texture-flow approaches used by
@@ -229,20 +298,54 @@ void main() {
 
     vec3 L1 = normalize(vec3(0.4, 0.8, 0.6));
     vec3 L2 = normalize(vec3(-0.5, 0.3, -0.4));
-    float d = max(dot(n, L1), 0.0) * 0.9
-            + max(dot(n, L2), 0.0) * 0.35
-            + 0.20;
-    vec3 c = albedo * d;
+    vec3 C1 = vec3(1.0, 0.96, 0.90);
+    vec3 C2 = vec3(0.70, 0.78, 1.0);
+    float ambient = 0.20;
+    if (u_light_style == 1) {
+        L1 = normalize(vec3(0.0, 0.65, 0.76));
+        L2 = normalize(vec3(-0.25, 0.55, 0.30));
+        C1 = vec3(0.98, 0.98, 1.0);
+        C2 = vec3(0.75, 0.82, 0.95);
+        ambient = 0.30;
+    } else if (u_light_style == 2) {
+        L1 = normalize(vec3(0.95, 0.28, 0.16));
+        L2 = normalize(vec3(-0.25, 0.45, -0.55));
+        C1 = vec3(1.0, 0.92, 0.84);
+        C2 = vec3(0.55, 0.62, 0.82);
+        ambient = 0.12;
+    } else if (u_light_style == 3) {
+        L1 = normalize(vec3(-0.40, 0.70, 0.55));
+        L2 = normalize(vec3(0.55, 0.35, -0.48));
+        C1 = vec3(1.0, 0.78, 0.58);
+        C2 = vec3(0.48, 0.62, 1.0);
+        ambient = 0.18;
+    }
+
+    float ndl1 = max(dot(n, L1), 0.0);
+    float ndl2 = max(dot(n, L2), 0.0);
+    if (u_mode == 0) {
+        ndl1 = clamp((dot(n, L1) + 0.32) / 1.32, 0.0, 1.0);
+        ndl2 = clamp((dot(n, L2) + 0.22) / 1.22, 0.0, 1.0);
+    }
+    vec3 light = C1 * ndl1 * 0.88 + C2 * ndl2 * 0.32 + vec3(ambient);
+    vec3 c = albedo * light;
 
     // Blinn-Phong specular: skin has a soft oil highlight; eyes use a tighter
     // wet highlight. Fabric stays matte.
     if (u_mode == 0 || u_mode == 3) {
         vec3 V = normalize(-v_pos);
         vec3 H = normalize(L1 + V);
-        float gloss = (u_mode == 3) ? 96.0 : 40.0;
-        float strength = (u_mode == 3) ? 0.20 : 0.09;
+        float rough_var = fbm(sample_p * 28.0 + vec3(2.0, 6.0, 3.0));
+        float roughness = clamp(0.46 + 0.20 * rough_var
+            - 0.08 * skin_front + 0.06 * skin_micro, 0.32, 0.78);
+        float gloss = (u_mode == 3) ? 96.0 : mix(72.0, 22.0, roughness);
+        float strength = (u_mode == 3) ? 0.20 : mix(0.105, 0.045, roughness);
         float spec = pow(max(dot(n, H), 0.0), gloss);
         c += strength * spec * vec3(1.0, 0.97, 0.93);
+        if (u_mode == 0) {
+            float scatter = pow(max(dot(-L1, n_base), 0.0), 2.0) * skin_front;
+            c += scatter * 0.035 * albedo * vec3(1.18, 0.56, 0.44);
+        }
     } else if (u_mode == 2) {
         // Kajiya-Kay style strand highlight. Approximate strand flow in the
         // surface tangent plane: mostly downward with a small procedural sway.
@@ -261,7 +364,7 @@ void main() {
     }
 
     float rim = pow(1.0 - max(dot(n, normalize(-v_pos)), 0.0), 3.0);
-    float rim_k = (u_mode == 0) ? 0.15 : ((u_mode == 2) ? 0.10 : ((u_mode == 3) ? 0.06 : 0.05));
+    float rim_k = (u_mode == 0) ? 0.055 : ((u_mode == 2) ? 0.10 : ((u_mode == 3) ? 0.06 : 0.05));
     c += rim_k * rim * vec3(1.0, 0.85, 0.7);
     frag = vec4(c, 1.0);
 }
@@ -313,6 +416,7 @@ class SkinProgram:
         self.u_color = glGetUniformLocation(self.prog, "u_color")
         self.u_mode  = glGetUniformLocation(self.prog, "u_mode")
         self.u_seed  = glGetUniformLocation(self.prog, "u_seed")
+        self.u_light_style = glGetUniformLocation(self.prog, "u_light_style")
         self.u_print_style    = glGetUniformLocation(self.prog, "u_print_style")
         self.u_print_strength = glGetUniformLocation(self.prog, "u_print_strength")
         self.u_stamp_style    = glGetUniformLocation(self.prog, "u_stamp_style")
