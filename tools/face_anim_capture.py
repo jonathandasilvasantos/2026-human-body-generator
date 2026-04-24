@@ -280,12 +280,96 @@ def run_channels(args, fbo_ms, fbo_res, skin_prog):
     return n
 
 
+def run_asymmetry(args, fbo_ms, fbo_res, skin_prog):
+    """Captures focused on subtle asymmetry: contempt, wink, single-side
+    brow flash, asymmetric anger.
+
+    Each row is one character; columns are the asymmetric expressions.
+    """
+    proj = mathx.perspective(math.radians(30),
+                             args.width / max(args.height, 1), 0.05, 20.0)
+    cases = [
+        ("wink_left",        {"eyeBlinkLeft": 1.0,
+                              "mouthSmileLeft": 0.5,
+                              "mouthSmileRight": 0.5}),
+        ("contempt",         face_anim.preset_weights("contempt")),
+        ("brow_flash_L",     {"browOuterUpLeft": 0.85,
+                              "browInnerUp": 0.30}),
+        ("asym_anger",       {"browDownLeft": 0.95,
+                              "browDownRight": 0.55,
+                              "noseSneerLeft": 0.55,
+                              "mouthPressLeft": 0.55,
+                              "mouthPressRight": 0.30,
+                              "eyeSquintLeft": 0.50}),
+        ("look_left",        {"eyeLookOutLeft": 0.85,
+                              "eyeLookInRight": 0.85}),
+        ("look_up",          {"eyeLookUpLeft": 0.85,
+                              "eyeLookUpRight": 0.85,
+                              "browInnerUp": 0.40}),
+    ]
+    n = 0
+    for preset in CHAR_PRESETS:
+        row = []
+        for label, weights in cases:
+            ch = _make_character(preset, expression="neutral",
+                                 blendshapes=weights)
+            target = _head_target(ch)
+            view = _view(target, 0.0, dist=0.40)
+            img = _draw_to_array(ch, proj, view, args.width, args.height,
+                                 fbo_ms, fbo_res, skin_prog)
+            row.append(img)
+            ch.delete()
+            n += 1
+            print(f"  asym {preset['label']} {label}")
+        strip = np.concatenate(row, axis=1)
+        out = os.path.join(args.out, f"{args.tag}_{preset['label']}_asym.png")
+        _save(strip, out)
+    return n
+
+
+def run_narrative(args, fbo_ms, fbo_res, skin_prog):
+    """A 12-frame narrative clip per character: neutral -> surprise ->
+    smile_duchenne -> neutral. Tests multi-key transitions, not just a
+    single in/out."""
+    proj = mathx.perspective(math.radians(30),
+                             args.width / max(args.height, 1), 0.05, 20.0)
+    n = 0
+    clip = face_anim.clip_from_presets([
+        (0.0, "neutral"),
+        (0.30, "surprise"),
+        (0.65, "smile_duchenne"),
+        (1.0, "neutral"),
+    ])
+    frames = 12
+    for preset in CHAR_PRESETS[:2]:
+        row = []
+        for fi in range(frames):
+            t = fi / (frames - 1)
+            weights = clip.sample(t)
+            ch = _make_character(preset, expression="neutral",
+                                 blendshapes=weights)
+            target = _head_target(ch)
+            view = _view(target, 0.0, dist=0.42)
+            img = _draw_to_array(ch, proj, view,
+                                 args.width, args.height,
+                                 fbo_ms, fbo_res, skin_prog)
+            row.append(img)
+            ch.delete()
+        strip = np.concatenate(row, axis=1)
+        out = os.path.join(args.out, f"{args.tag}_{preset['label']}_narrative.png")
+        _save(strip, out)
+        n += 1
+        print(f"  narrative {preset['label']}")
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="screenshots/face_anim")
     ap.add_argument("--tag", default="anim")
     ap.add_argument("--matrix",
-                    choices=["presets", "clips", "channels", "all"],
+                    choices=["presets", "clips", "channels", "asymmetry",
+                             "narrative", "all"],
                     default="presets")
     ap.add_argument("--width",  type=int, default=512)
     ap.add_argument("--height", type=int, default=600)
@@ -301,6 +385,10 @@ def main():
         total += run_clips(args, fbo_ms, fbo_res, skin_prog)
     if args.matrix in ("channels", "all"):
         total += run_channels(args, fbo_ms, fbo_res, skin_prog)
+    if args.matrix in ("asymmetry", "all"):
+        total += run_asymmetry(args, fbo_ms, fbo_res, skin_prog)
+    if args.matrix in ("narrative", "all"):
+        total += run_narrative(args, fbo_ms, fbo_res, skin_prog)
 
     glfw.terminate()
     print(f"done: {total} frames -> {args.out}")

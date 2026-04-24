@@ -1298,7 +1298,9 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
         lower_y = y - eye_r * (0.60 * aperture)
         # cheekSquint pulls the *lower* lid up (orbicularis oculi, pars
         # orbitalis) without touching the upper lid -- the Duchenne tell.
-        lower_y += eye_r * 0.20 * cheek_s
+        # Bigger amplitude makes the eye-narrowing read clearly when
+        # paired with a smile.
+        lower_y += eye_r * 0.32 * cheek_s
 
         # Blink: upper lid sweeps down to meet lower; lower stays put.
         if blink > 0.0:
@@ -1414,7 +1416,11 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     corner_rz = length * 0.010
 
     def _corner(side_sign, smile, frown, dimple, stretch):
-        lift = length * (0.018 * smile - 0.014 * frown)
+        # Wider amplitude than the legacy preset so a w=0.7 smile reads
+        # plainly in a thumbnail-sized render. Frown amplitude is kept
+        # smaller because mouth-corner-down past a few mm starts to
+        # caricature.
+        lift = length * (0.026 * smile - 0.018 * frown)
         # dimple pulls corner back (-Z) and slightly inward (X toward 0).
         x = side_sign * (base_corner_x + length * 0.014 * stretch
                          - length * 0.006 * dimple)
