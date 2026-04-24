@@ -1464,6 +1464,10 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     lowDn_r  = _fa.w(weights, "mouthLowerDownRight")
     sneer_l  = _fa.w(weights, "noseSneerLeft")
     sneer_r  = _fa.w(weights, "noseSneerRight")
+    roll_upper = _fa.w(weights, "mouthRollUpper")
+    roll_lower = _fa.w(weights, "mouthRollLower")
+    shrug_upper = _fa.w(weights, "mouthShrugUpper")
+    shrug_lower = _fa.w(weights, "mouthShrugLower")
     avg_smile = 0.5 * (smile_l + smile_r)
     avg_press = 0.5 * (press_l + press_r)
     mouth_tension = muscles["mouth_tension"]
@@ -1481,12 +1485,21 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     up_rx = length * (0.040 - 0.010 * pucker
                       + 0.008 * (stretch_l + stretch_r) * 0.5
                       - 0.004 * orbicularis_oris)
-    up_ry = length * 0.0085 * fullness * max(0.52, press_thin)
+    # Roll tucks the upper lip inward (hides the red vermillion zone over
+    # the teeth); shrug pushes it forward+up (AU17 mentalis for the lower,
+    # AU16 levator for the upper).
+    up_ry = length * 0.0085 * fullness * max(0.40, press_thin - 0.25 * roll_upper)
     up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel
-                      + 0.0025 * avg_press) * fullness * lip_volume
+                      + 0.0025 * avg_press
+                      - 0.003 * roll_upper) * fullness * lip_volume
     up_y = (y_mouth + length * 0.010 + open_amt * 0.35
-            + length * 0.004 * avg_smile - length * 0.010 * mouth_close)
-    lip_z_forward = length * (0.005 * pucker + 0.006 * funnel + 0.006 * jaw_forward)
+            + length * 0.004 * avg_smile - length * 0.010 * mouth_close
+            - length * 0.014 * roll_upper
+            + length * 0.008 * shrug_upper)
+    lip_z_forward = length * (0.005 * pucker + 0.006 * funnel
+                              + 0.006 * jaw_forward
+                              - 0.012 * roll_upper
+                              + 0.006 * shrug_upper)
 
     up_L_y = up_y + length * (0.014 * (upUp_l + 0.60 * sneer_l)
                               + 0.010 * smile_l - 0.004 * frown_l)
@@ -1539,16 +1552,22 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     avg_lowDn = 0.5 * (lowDn_l + lowDn_r)
     low_y = (y_mouth - length * 0.010 - open_amt * 0.65
              - length * 0.014 * avg_lowDn + length * 0.003 * avg_smile
-             + length * 0.012 * mouth_close)
+             + length * 0.012 * mouth_close
+             + length * 0.016 * roll_lower
+             + length * 0.008 * shrug_lower)
     low_rx = length * (0.070 - 0.018 * pucker
                        + 0.011 * (stretch_l + stretch_r) * 0.5
                        - 0.006 * orbicularis_oris)
-    low_ry = length * 0.011 * fullness * max(0.50, 1.0 - 0.34 * avg_press)
+    low_ry = length * 0.011 * fullness * max(
+        0.40, 1.0 - 0.34 * avg_press - 0.28 * roll_lower)
     low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel
-                       + 0.0025 * avg_press) * fullness * lip_volume
+                       + 0.0025 * avg_press
+                       - 0.004 * roll_lower) * fullness * lip_volume
     lower = prim.ellipsoid(
         (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker
-         + length * 0.004 * funnel + length * 0.006 * jaw_forward),
+         + length * 0.004 * funnel + length * 0.006 * jaw_forward
+         - length * 0.012 * roll_lower
+         + length * 0.006 * shrug_lower),
         (low_rx, low_ry, low_rz),
         head_idx, parent, rings=6, radial=20,
     )
