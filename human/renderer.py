@@ -17,6 +17,11 @@ layout(location=3) in vec2  a_weights;
 uniform mat4 u_proj;
 uniform mat4 u_view;
 uniform mat4 u_bones[""" + str(MAX_BONES) + """];
+// Outward inflate along the vertex normal, scaled by the per-vertex
+// bend scalar. Used to push fabric off the body at elbow/knee folds so
+// a tight sleeve or pant leg doesn't let skin poke through when the
+// joint flexes. Set to 0 for skin and non-garment meshes.
+uniform float u_bend_inflate;
 
 out vec3 v_nrm;
 out vec3 v_pos;
@@ -31,20 +36,26 @@ void main() {
     mat4 Ma = u_bones[a_bones.x];
     mat4 Mb = u_bones[a_bones.y];
     mat4 M = Ma * a_weights.x + Mb * a_weights.y;
-    vec4 p = M * vec4(a_pos, 1.0);
-    gl_Position = u_proj * u_view * p;
-    v_pos = p.xyz;
-    v_nrm = mat3(M) * a_nrm;
-    v_local = a_pos;
 
-    // Divergence of the two bones' rotations applied to the rest position.
-    // mat3() strips translation so parent/child rest-pose offsets cancel;
-    // only rotation differences contribute. Weight product w_a * w_b peaks
-    // at 0.25 on the 50/50 blend band -- exactly the joint fold zone.
     vec3 da = mat3(Ma) * a_pos;
     vec3 db = mat3(Mb) * a_pos;
     float blend = a_weights.x * a_weights.y;
-    v_bend = clamp(length(da - db) * blend * 4.0, 0.0, 1.2);
+    float bend_raw = clamp(length(da - db) * blend * 4.0, 0.0, 1.2);
+    v_bend = bend_raw;
+
+    // Push the vertex outward along its (skinned) world normal by a
+    // small amount proportional to bend. A tight sleeve / pant leg
+    // puffs off the skin at the elbow / knee so the body mesh doesn't
+    // clip through. Amount is modest because heavy inflation looks
+    // balloon-like; the improvement to clip-through is worth the
+    // silhouette softening.
+    vec3 world_nrm = normalize(mat3(M) * a_nrm);
+    vec3 p_world = (M * vec4(a_pos, 1.0)).xyz
+                    + world_nrm * u_bend_inflate * bend_raw;
+    gl_Position = u_proj * u_view * vec4(p_world, 1.0);
+    v_pos = p_world;
+    v_nrm = world_nrm;
+    v_local = a_pos;
 }
 """
 
@@ -553,6 +564,7 @@ class SkinProgram:
         self.u_stamp_style    = glGetUniformLocation(self.prog, "u_stamp_style")
         self.u_stamp_strength = glGetUniformLocation(self.prog, "u_stamp_strength")
         self.u_material       = glGetUniformLocation(self.prog, "u_material")
+        self.u_bend_inflate   = glGetUniformLocation(self.prog, "u_bend_inflate")
 
 
 class LineProgram:
