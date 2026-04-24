@@ -119,6 +119,9 @@ void main() {
         albedo *= 0.75 + 0.30 * strand;
         float fine = fbm(sample_p * vec3(180.0, 30.0, 180.0));
         albedo *= 0.92 + 0.14 * fine;
+        float line = 0.5 + 0.5 * cos((v_pos.x + v_pos.z * 0.35) * 170.0
+                                      + fbm(sample_p * 9.0) * 5.0);
+        albedo *= 0.90 + 0.16 * line;
     } else {
         // EYES: keep sclera/iris/pupil out of the skin pigmentation path.
         // The eye surface needs clean wet specular response, not pores or
@@ -143,6 +146,21 @@ void main() {
         float strength = (u_mode == 3) ? 0.20 : 0.09;
         float spec = pow(max(dot(n, H), 0.0), gloss);
         c += strength * spec * vec3(1.0, 0.97, 0.93);
+    } else if (u_mode == 2) {
+        // Kajiya-Kay style strand highlight. Approximate strand flow in the
+        // surface tangent plane: mostly downward with a small procedural sway.
+        vec3 V = normalize(-v_pos);
+        vec3 flow = normalize(vec3(
+            0.18 * sin((v_pos.x + u_seed) * 16.0),
+            1.0,
+            0.10 * cos((v_pos.z + u_seed) * 14.0)
+        ));
+        vec3 T = normalize(flow - n * dot(flow, n));
+        vec3 H = normalize(L1 + V);
+        float sinTH = sqrt(max(0.0, 1.0 - dot(T, H) * dot(T, H)));
+        float primary = pow(sinTH, 42.0);
+        float secondary = pow(sinTH, 9.0) * 0.45;
+        c += (0.10 * primary + 0.045 * secondary) * vec3(1.0, 0.92, 0.72);
     }
 
     float rim = pow(1.0 - max(dot(n, normalize(-v_pos)), 0.0), 3.0);
