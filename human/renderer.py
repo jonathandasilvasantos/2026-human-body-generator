@@ -281,9 +281,26 @@ void main() {
         albedo *= 0.75 + 0.30 * strand;
         float fine = fbm(sample_p * vec3(180.0, 30.0, 180.0));
         albedo *= 0.92 + 0.14 * fine;
+        // Strand lines, warped by a low-frequency fbm so they don't read as
+        // a regular corduroy pattern.
+        float warp = fbm(sample_p * 6.0);
         float line = 0.5 + 0.5 * cos((v_pos.x + v_pos.z * 0.35) * 170.0
-                                      + fbm(sample_p * 9.0) * 5.0);
+                                      + warp * 7.0);
         albedo *= 0.90 + 0.16 * line;
+        // Per-clump color variation: low-frequency multiplier breaks up the
+        // uniform block color so a head of hair reads as many strands of
+        // similar but not identical shade.
+        float clump = fbm(sample_p * vec3(6.0, 3.0, 6.0));
+        albedo *= 0.88 + 0.22 * clump;
+        // Root-to-tip gradient: real hair is slightly darker at the scalp
+        // (more shadow between strands) and brighter at exposed tips. Use
+        // world-space Y around the head as a proxy.
+        // Long hair drape tips sit well below the crown (negative local Y
+        // for drape verts). Treat both ends as slightly lighter: crown
+        // catches sky light, tips are dusty/exposed.
+        float tip_lo = 1.0 - smoothstep(-0.25, 0.05, v_local.y);
+        float tip_hi = smoothstep(0.28, 0.38, v_local.y);
+        albedo *= 1.0 + 0.08 * max(tip_lo, tip_hi);
     } else if (u_mode == 4) {
         // SHOES: matte leather/rubber. Keep them out of clothing print logic.
         float grain = fbm(sample_p * 18.0);
@@ -356,17 +373,26 @@ void main() {
         // Kajiya-Kay style strand highlight. Approximate strand flow in the
         // surface tangent plane: mostly downward with a small procedural sway.
         vec3 V = normalize(-v_pos);
-        vec3 flow = normalize(vec3(
-            0.18 * sin((v_pos.x + u_seed) * 16.0),
-            1.0,
-            0.10 * cos((v_pos.z + u_seed) * 14.0)
-        ));
-        vec3 T = normalize(flow - n * dot(flow, n));
+        // Strand flow approximates gravity-pulled fibers: local -Y projected
+        // onto the surface tangent plane, with a small procedural sway so
+        // the highlight doesn't read as a perfect horizontal band.
+        vec3 down = vec3(
+            0.12 * sin((v_local.x + u_seed) * 14.0),
+            -1.0,
+            0.08 * cos((v_local.z + u_seed) * 12.0)
+        );
+        vec3 T = normalize(down - n * dot(down, n));
         vec3 H = normalize(L1 + V);
         float sinTH = sqrt(max(0.0, 1.0 - dot(T, H) * dot(T, H)));
-        float primary = pow(sinTH, 42.0);
+        // Primary specular: tight white highlight. Secondary: broader tinted
+        // highlight shifted slightly, marketing-photo style anisotropy.
+        float primary = pow(sinTH, 56.0);
         float secondary = pow(sinTH, 9.0) * 0.45;
-        c += (0.10 * primary + 0.045 * secondary) * vec3(1.0, 0.92, 0.72);
+        // Break up the highlight band with a clump-scale noise so strand
+        // clusters catch light asymmetrically.
+        float hl_noise = 0.65 + 0.55 * fbm(sample_p * vec3(22.0, 8.0, 22.0));
+        c += (0.11 * primary + 0.048 * secondary) * hl_noise
+             * vec3(1.0, 0.92, 0.72);
     }
 
     float rim = pow(1.0 - max(dot(n, normalize(-v_pos)), 0.0), 3.0);
