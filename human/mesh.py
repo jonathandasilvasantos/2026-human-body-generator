@@ -263,8 +263,17 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         chunks_i.append(idx + offset)
         offset += v.shape[0]
 
-    # Small shoulder blend piece so tops meet the upper-arm shell without
-    # the oversized "puff sleeve" look from the previous version.
+    # Shoulder blend piece: must fully envelop the body's deltoid bulge
+    # under arbitrary arm rotation. The body deltoid (built in `build`) is
+    # an ellipsoid sized r_shoulder=u_r*0.98 with axes (1.00, 0.88, 0.96)
+    # offset y=-0.01, skinned weight_self=0.75. To prevent skin pop-through
+    # when the arm raises/rotates, the garment ellipsoid here is derived
+    # directly from the body deltoid extents + radius_inflate clearance,
+    # and uses the *same* uarm/clav blend weight so both deform identically.
+    body_r_shoulder = 0.98  # multiplier on u_r used by build()'s deltoid
+    body_axes = (1.00, 0.88, 0.96)
+    body_offset_y = -0.01
+    body_weight_self = 0.75
     for name, u_idx in (("uarm_L", _find(bones, "uarm_L")),
                         ("uarm_R", _find(bones, "uarm_R"))):
         if name not in wanted or u_idx < 0:
@@ -272,14 +281,61 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         _, u_parent, _, u_tip, u_r = bones[u_idx]
         u_tip = np.asarray(u_tip, dtype=np.float32)
         R = mathx.align_y_to(u_tip)
-        r_sh = (u_r + radius_inflate) * 0.82
+        # Body deltoid extents in bone-local space
+        body_rx = u_r * body_r_shoulder * body_axes[0]
+        body_ry = u_r * body_r_shoulder * body_axes[1]
+        body_rz = u_r * body_r_shoulder * body_axes[2]
+        # Sleeve must clear body deltoid by full radius_inflate on every axis
+        clear = max(radius_inflate, 0.012)
+        rx = body_rx + clear
+        ry = body_ry + clear
+        rz = body_rz + clear
         v, n, ba, bb, w, idx = prim.ellipsoid(
-            (0.0, -0.004, 0.0),
-            (r_sh * 1.00, r_sh * 0.74, r_sh * 0.94),
-            u_idx, u_parent, weight_self=0.72,
-            rings=8, radial=12,
+            (0.0, body_offset_y, 0.0),
+            (rx, ry, rz),
+            u_idx, u_parent, weight_self=body_weight_self,
+            rings=10, radial=16,
         )
         chunks_v.append(v @ R.T); chunks_n.append(n @ R.T)
+        chunks_ba.append(ba); chunks_bb.append(bb); chunks_w.append(w)
+        chunks_i.append(idx + offset)
+        offset += v.shape[0]
+
+    # Clavicle-anchored shoulder yoke: bridges the armpit gap that opens up
+    # when the arm raises. Without it, the deltoid ellipsoid above (skinned
+    # mostly to the upper-arm) rotates away from the chest shell as the arm
+    # lifts, exposing skin under the armpit. By skinning this yoke to the
+    # clavicle bone (which barely rotates with arm motion), the patch stays
+    # planted on the lateral chest and keeps the cloth continuous through
+    # the full arm-raise range.
+    chest_idx = _find(bones, "chest")
+    for clav_name in ("clav_L", "clav_R"):
+        if clav_name not in wanted:
+            continue
+        c_idx = _find(bones, clav_name)
+        if c_idx < 0 or chest_idx < 0:
+            continue
+        _, c_parent, _, c_tip, c_r = bones[c_idx]
+        c_tip_v = np.asarray(c_tip, dtype=np.float32)
+        c_len = float(np.linalg.norm(c_tip_v))
+        # Build in the clavicle's pre-rotation frame where +Y is along the
+        # bone's length (head -> tip). Place the ellipsoid centred ~85%
+        # along the clavicle (right under the shoulder joint) and slightly
+        # depressed so it caps the armpit. R rotates it onto the actual
+        # clavicle axis (lateral) before merging.
+        Rc = mathx.align_y_to(c_tip_v)
+        ext_lat = c_len * 0.40 + radius_inflate * 0.7   # along clav (lateral)
+        ext_dn  = c_r * 1.4 + radius_inflate            # downward (axillary)
+        ext_fb  = c_r * 1.6 + radius_inflate            # front-back
+        v, n, ba, bb, w, idx = prim.ellipsoid(
+            (0.0, c_len * 0.85, -c_r * 0.4),
+            (ext_dn, ext_lat, ext_fb),
+            c_idx, chest_idx, weight_self=0.85,
+            rings=8, radial=14,
+        )
+        v = v @ Rc.T
+        n = n @ Rc.T
+        chunks_v.append(v); chunks_n.append(n)
         chunks_ba.append(ba); chunks_bb.append(bb); chunks_w.append(w)
         chunks_i.append(idx + offset)
         offset += v.shape[0]
