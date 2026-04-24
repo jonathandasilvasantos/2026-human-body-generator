@@ -167,6 +167,43 @@ retargeted onto two different procedurally-generated characters:
   (elbow/knee flexion only, shoulder ad/abduction asymmetric, etc.).
   Both `random_pose()` and BVH playback respect them.
 
+### Audio-driven lip sync
+- **WAV → viseme track** in `human/audio_lipsync.py`. Reads any mono /
+  stereo 8/16/32-bit PCM WAV, runs a classic speech front-end
+  (25 ms / 10 ms Hann-windowed rFFT), and emits a
+  `face_anim.VisemeTrack` that samples directly into ARKit-52 weights
+  on `Appearance.blendshapes`.
+- **Phoneme-recogniser-free** — same family as Oculus LipSync's
+  "simple" mode and Annosoft's energy + formant fallback. No external
+  model, no forced alignment, no network calls.
+- **Per-clip adaptive thresholds**: classifier anchors its decisions
+  to the 30/70/75 quantiles of the active frames in the current clip,
+  so it stays calibrated across mics, rooms and speakers without
+  re-tuning.
+- **Preston-Blair 12-viseme coverage**: `sil / AI / E / O / U / MBP /
+  FV / L / WQ / etc / S / TH`, selected by a small decision tree on
+  RMS dBFS, zero-crossing rate, HF ratio and spectral centroid. F1/F2
+  bands aligned to Peterson & Barney (1952).
+- **Bilabial-closure pass**: short (30–110 ms) energy notches flanked
+  by voiced speech are relabelled `MBP` so the lips briefly meet on
+  `/m/ /b/ /p/` even though the closure itself is silent.
+- **Energy smoothing + loudness-driven jaw**: one-pole LP on RMS
+  (τ=35 ms) removes per-frame flutter; `jawOpen` is a blend of the
+  viseme target and instantaneous loudness (JALI-style), so casual
+  speech lights up the jaw even when the spectrum is ambiguous.
+- **Cohen-Massaro coarticulation**: visemes are emitted as dominance
+  segments with width proportional to run duration, so /moon/ rounds
+  back through the /m/ and /stew/ anticipates the /u/.
+- **Viewer key `K`** plays `./voice.wav` via `afplay` (macOS) /
+  `aplay` / `paplay` (linux) on a detached subprocess, samples the
+  track on the audio clock each frame and rebuilds the face. Audio
+  is the clock, so AV stays in sync even when the face rebuild is
+  slow; static-frame detection skips the rebuild when no channel has
+  moved by more than 2 %.
+- **Offline strip capture** via `env/bin/python -m tools.lipsync_capture
+  --wav voice.wav --out screenshots/strip.png --frames 12` renders a
+  labelled panel per sampled timestamp for headless validation.
+
 ---
 
 ## Research foundation
@@ -191,6 +228,17 @@ The implementation draws from:
 - **Alotaibi & Smith** — Biophysical 3D Morphable Model of Face Appearance
   (ICCV 2017); Smith et al. — Morphable Face Albedo Model (CVPR 2020)
 - **NVIDIA GPU Gems** — improved Perlin noise / fBm in GLSL
+- **Blair** (1946), *Advanced Animation* — the 12-viseme reduction used
+  in almost every production lip-sync stack
+- **Peterson & Barney** (1952) — F1/F2 control spaces for English vowels
+- **Lewis** (1991), *Automated lip-sync: background and techniques* —
+  the energy + spectral-envelope family the lip-sync pipeline sits in
+- **Cohen & Massaro** (1993), *Modeling coarticulation in synthetic
+  visual speech* — dominance-function coarticulation
+- **Ezzat, Geiger & Poggio** (2002), *Trainable videorealistic speech*
+- **Edwards, Landreth, Fiume & Singh** (2016), *JALI: An Animator-
+  Centric Viseme Model* — independent jaw + lip controls driven by
+  prosody, which inspired the loudness-driven `jawOpen` layer
 
 ---
 
@@ -220,7 +268,8 @@ Controls:
 | `S`           | re-roll shape only |
 | `C`           | re-roll appearance (hair, clothes, colors) |
 | `W`           | toggle procedural walk animation |
-| `A`           | toggle BVH playback (if a BVH is loaded) |
+| `J`           | toggle BVH playback (if a BVH is loaded) |
+| `K`           | play `./voice.wav` with audio-driven lip sync |
 | `P`           | random static pose |
 | `T`           | T-pose |
 | `B`           | toggle skeleton overlay |
@@ -246,6 +295,17 @@ Flags: `--out`, `--seed`, `--gender male|female|neutral`,
 `--pose t_pose|walk_passing|walk_heel_strike|bvh`, `--bvh PATH`, `--bvh-time S`,
 `--width`, `--height`, `--yaw`, `--pitch`, `--dist`.
 
+### Lip-sync diagnostics
+
+```bash
+# Render a 12-panel strip of faces across the lip-sync track for any WAV.
+env/bin/python -m tools.lipsync_capture \
+    --wav voice.wav --out screenshots/lipsync_strip.png --frames 12
+```
+
+Flags: `--wav`, `--out`, `--frames`, `--panel`, `--seed`. Each panel is
+labelled with its timestamp and the dominant viseme active at that time.
+
 ### Animation diagnostics
 
 ```bash
@@ -264,6 +324,7 @@ Flags: `--mirror`, `--frames`, `--seed`, `--gender`, `--width`, `--height`,
 
 ```
 animations/walk2.bvh           sample Mixamo BVH (69 frames @ 30fps)
+voice.wav                      sample speech clip for the K lip-sync key
 human_generator.py             entry point: interactive viewer
 run.sh                         launcher that plays walk2.bvh on startup
 human/
@@ -281,6 +342,13 @@ human/
   bvh.py                       BVH parser
   animation.py                 BVH retargeting (world-rotation FK)
   anim_debug.py                diagnostic + strip render
+  face_anim.py                 ARKit-52 rig, FACS presets, visemes,
+                               Cohen-Massaro VisemeTrack
+  audio_lipsync.py             WAV -> viseme track + blendshape sampler
+tools/
+  lipsync_capture.py           labelled face-strip renderer for a WAV
+  viseme_capture.py            static viseme grid (no audio)
+  face_anim_capture.py         expression/clip capture matrices
 ```
 
 ---
