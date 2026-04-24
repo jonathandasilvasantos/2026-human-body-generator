@@ -86,6 +86,10 @@ float circle_tile(vec2 uv, float r) {
     return 1.0 - smoothstep(r, r + 0.035, length(p));
 }
 
+float diamond(vec2 uv, float r) {
+    return 1.0 - smoothstep(r, r + 0.035, abs(uv.x) + abs(uv.y));
+}
+
 void main() {
     vec3 n = normalize(v_nrm);
     vec3 sample_p = v_pos + vec3(u_seed * 37.0, u_seed * 13.0, u_seed * 91.0);
@@ -156,6 +160,27 @@ void main() {
         vec3 print_color = (lum < 0.48) ? light_print : dark_print;
         float print_strength = 0.38 + 0.18 * hash3(u_color * 19.0 + vec3(u_seed * 5.0));
         albedo = mix(albedo, print_color, print_mask * print_strength);
+
+        // Localized chest decal: a front-facing, torso-height stamp. This is
+        // effectively a procedural decal projection with soft spatial gating,
+        // so it does not bleed onto sleeves, lower garments, or shoes.
+        vec2 decal_uv = vec2(v_pos.x / 0.12, (v_pos.y - 0.34) / 0.13);
+        float front_gate = smoothstep(0.34, 0.62, n.z);
+        float x_gate = 1.0 - smoothstep(0.72, 0.98, abs(decal_uv.x));
+        float y_gate = 1.0 - smoothstep(0.82, 1.06, abs(decal_uv.y));
+        float decal_gate = front_gate * x_gate * y_gate;
+        float decal_style = hash3(u_color * 31.0 + vec3(u_seed * 9.0));
+        float decal_mask = 0.0;
+        if (decal_style < 0.50) {
+            decal_mask = circle_tile(decal_uv * 0.5 + 0.5, 0.32);
+            decal_mask *= 1.0 - circle_tile(decal_uv * 0.5 + 0.5, 0.13);
+        } else {
+            decal_mask = diamond(decal_uv, 0.46);
+            decal_mask *= 1.0 - diamond(decal_uv, 0.18);
+        }
+        decal_mask *= decal_gate;
+        vec3 decal_color = (lum < 0.48) ? mix(u_color, vec3(1.0), 0.62) : u_color * 0.28;
+        albedo = mix(albedo, decal_color, decal_mask * 0.72);
     } else if (u_mode == 2) {
         // HAIR: strongly anisotropic fBm -- long wavelength along the head's
         // vertical axis, short across it -> reads as vertical strands.
