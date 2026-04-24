@@ -995,22 +995,94 @@ def _head_info(bones, shape=None):
     return head_idx, parent, R, length, r, head_w, head_d
 
 
+# Eye geometry constants (factored so eyeball / iris / pupil / limbus /
+# catchlight stay in perfect concentric agreement and convergence is
+# applied identically everywhere). All scales are relative to head length.
+EYE_SEP_X      = 0.108   # half-distance between eye centers
+EYE_RADIUS     = 0.050   # eyeball radius (true sphere)
+IRIS_RATIO     = 0.55    # iris radius as fraction of eyeball radius
+PUPIL_RATIO    = 0.30    # pupil radius as fraction of iris radius (~3mm)
+LIMBUS_RATIO   = 1.10    # limbal-ring outer radius as fraction of iris
+# Convergence: each iris is shifted inward so both gaze axes meet ~50 cm
+# in front of the head (typical portrait distance). Without this the eyes
+# read as a parallel "thousand-yard stare" and any tiny skull asymmetry
+# tips the brain toward registering exotropia.
+GAZE_TARGET_M  = 0.50    # focal distance (meters) -- portrait range
+# Eye is set ~0.7*head_d back from face surface; iris sits 0.75*eye_r
+# ahead of the eyeball center. Convergence shift is computed per-build
+# from the actual offsets so the math stays consistent if those move.
+
+
+def _eye_metrics(length, head_d):
+    """Return shared eye placement: (sep, y, z_back, eye_r, conv_shift).
+
+    ``z_back`` is the eyeball center; iris/pupil/limbus/catchlight all
+    sit forward of that on +Z. ``conv_shift`` is the inward x-offset to
+    apply to anything sitting at iris-depth so both eyes converge on
+    GAZE_TARGET_M instead of staring parallel.
+    """
+    sep   = length * EYE_SEP_X
+    y     = length * H_EYE
+    z     = head_d * 0.70
+    eye_r = length * EYE_RADIUS
+    # iris depth ahead of eyeball center
+    iris_z_off = eye_r * 0.75
+    # convergence: tiny similar-triangles toe-in. Real head_length is
+    # already in meter-ish units; sep is the lateral half-separation.
+    # angle = atan(sep / GAZE_TARGET_M); inward shift at iris depth
+    # = iris_z_off * tan(angle).
+    if GAZE_TARGET_M > 0:
+        import math as _m
+        ang = _m.atan(sep / GAZE_TARGET_M)
+        conv_shift = iris_z_off * _m.tan(ang)
+    else:
+        conv_shift = 0.0
+    return sep, y, z, eye_r, conv_shift
+
+
 def build_eyes(bones, shape=None) -> SkinnedMesh:
     info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    # Eye line at y = length*H_EYE. Pushed deeper into the orbit (lower z,
-    # smaller radius) so the eyelids read as real folds over a set-in
-    # eyeball rather than a surface disc.
-    sep  = length * 0.108
-    y    = length * H_EYE
-    z    = head_d * 0.70
-    eye_r = length * 0.050
-    radii = (eye_r, eye_r * 0.95, eye_r * 0.9)
+    sep, y, z, eye_r, _ = _eye_metrics(length, head_d)
+    # Truly spherical eyeball -- previous (rx, ry*0.95, rz*0.9) gave a
+    # squashed ovoid that read as a flat disc once the lids covered the
+    # poles. A real sclera is near-perfectly spherical.
+    radii = (eye_r, eye_r, eye_r)
     chunks = [
-        prim.ellipsoid((+sep, y, z), radii, head_idx, parent, rings=12, radial=18),
-        prim.ellipsoid((-sep, y, z), radii, head_idx, parent, rings=12, radial=18),
+        prim.ellipsoid((+sep, y, z), radii, head_idx, parent, rings=14, radial=20),
+        prim.ellipsoid((-sep, y, z), radii, head_idx, parent, rings=14, radial=20),
+    ]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_limbus(bones, shape=None) -> SkinnedMesh:
+    """Dark limbal ring drawn behind the iris.
+
+    Reads as the corneoscleral junction in real eyes and is the single
+    biggest cue that an iris is part of a 3D ball rather than a printed
+    decal. We render it as a slightly-larger dark disc placed *behind*
+    the iris (smaller +Z offset) so the iris hides its center and only
+    the outer annulus shows.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, r, head_w, head_d = info
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    iris_r = eye_r * IRIS_RATIO
+    limb_r = iris_r * LIMBUS_RATIO
+    # Sits a hair behind the iris so only the outer ring peeks through.
+    z_lim = z + eye_r * 0.74
+    radii = (limb_r, limb_r, limb_r * 0.18)
+    chunks = [
+        prim.ellipsoid((+sep - conv, y, z_lim), radii, head_idx, parent,
+                       rings=6, radial=18),
+        prim.ellipsoid((-sep + conv, y, z_lim), radii, head_idx, parent,
+                       rings=6, radial=18),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
@@ -1022,18 +1094,18 @@ def build_iris(bones, shape=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep  = length * 0.108
-    y    = length * H_EYE
-    z    = head_d * 0.70
-    eye_r = length * 0.050
-    # iris disc sits on the front surface of the eye white
-    iris_r = eye_r * 0.55
-    radii = (iris_r, iris_r, iris_r * 0.3)
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    iris_r = eye_r * IRIS_RATIO
+    # Slight forward dome on the iris (rz a bit thicker than before) so
+    # the colored disc reads as recessed under a corneal bulge rather
+    # than as a perfectly flat decal stuck to the sclera.
+    radii = (iris_r, iris_r, iris_r * 0.42)
+    z_iris = z + eye_r * 0.75
     chunks = [
-        prim.ellipsoid((+sep, y, z + eye_r * 0.75), radii, head_idx, parent,
-                       rings=8, radial=14),
-        prim.ellipsoid((-sep, y, z + eye_r * 0.75), radii, head_idx, parent,
-                       rings=8, radial=14),
+        prim.ellipsoid((+sep - conv, y, z_iris), radii, head_idx, parent,
+                       rings=8, radial=16),
+        prim.ellipsoid((-sep + conv, y, z_iris), radii, head_idx, parent,
+                       rings=8, radial=16),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
@@ -1041,22 +1113,57 @@ def build_iris(bones, shape=None) -> SkinnedMesh:
 
 
 def build_pupils(bones, shape=None) -> SkinnedMesh:
-    """Small dark pupil in the centre of each iris."""
+    """Small dark pupil in the centre of each iris.
+
+    Pupil diameter is ~30% of the iris (≈3mm of a 12mm iris under typical
+    indoor light); larger reads as a cartoon stare.
+    """
     info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep  = length * 0.108
-    y    = length * H_EYE
-    z    = head_d * 0.70
-    eye_r = length * 0.050
-    pr = eye_r * 0.22
-    radii = (pr, pr, pr * 0.3)
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    iris_r = eye_r * IRIS_RATIO
+    pr = iris_r * PUPIL_RATIO
+    radii = (pr, pr, pr * 0.4)
+    z_pup = z + eye_r * 0.86
     chunks = [
-        prim.ellipsoid((+sep, y, z + eye_r * 0.85), radii, head_idx, parent,
-                       rings=6, radial=10),
-        prim.ellipsoid((-sep, y, z + eye_r * 0.85), radii, head_idx, parent,
-                       rings=6, radial=10),
+        prim.ellipsoid((+sep - conv, y, z_pup), radii, head_idx, parent,
+                       rings=6, radial=12),
+        prim.ellipsoid((-sep + conv, y, z_pup), radii, head_idx, parent,
+                       rings=6, radial=12),
+    ]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_catchlights(bones, shape=None) -> SkinnedMesh:
+    """Small specular catchlights on the upper-outer iris of each eye.
+
+    A single bright speck per eye fakes the corneal highlight that real
+    photography always picks up; without it the eyes read as dead glass.
+    Position is the same on both eyes (upper-outer, *not* mirrored on the
+    medial side) so it's read as one consistent off-axis light source --
+    mirrored highlights look uncanny.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, r, head_w, head_d = info
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    iris_r = eye_r * IRIS_RATIO
+    cr = iris_r * 0.18
+    radii = (cr, cr, cr * 0.5)
+    # Upper-outer placement: shift up and to the lateral side per eye.
+    dy = iris_r * 0.42
+    dx = iris_r * 0.30
+    z_cat = z + eye_r * 0.92
+    chunks = [
+        prim.ellipsoid((+sep - conv + dx, y + dy, z_cat), radii,
+                       head_idx, parent, rings=4, radial=10),
+        prim.ellipsoid((-sep + conv - dx, y + dy, z_cat), radii,
+                       head_idx, parent, rings=4, radial=10),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)

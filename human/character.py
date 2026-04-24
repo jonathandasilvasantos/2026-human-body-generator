@@ -60,7 +60,9 @@ _EYE_COLORS: List[Color] = [
     (0.12, 0.08, 0.05),  # dark brown
 ]
 
-_EYE_WHITE: Color = (0.94, 0.92, 0.88)
+_EYE_WHITE:    Color = (0.93, 0.91, 0.87)  # warm off-white sclera
+_EYE_LIMBUS:   Color = (0.06, 0.05, 0.05)  # dark corneoscleral ring
+_EYE_CATCH:    Color = (1.00, 0.99, 0.96)  # near-white specular catchlight
 
 
 # --- appearance --------------------------------------------------------------
@@ -300,10 +302,21 @@ class Character:
         # body skin (body + head compound + bust + glutes handled by build())
         add(mesh_mod.build(self.bones, self.shape), app.skin_color, 0)
 
-        # eyes (whites + iris + pupil), anatomical eyelid occlusion, and lips
-        add(mesh_mod.build_eyes(self.bones, self.shape),    _EYE_WHITE,      3)
-        add(mesh_mod.build_iris(self.bones, self.shape),    app.eye_color,   3)
-        add(mesh_mod.build_pupils(self.bones, self.shape),  app.pupil_color, 3)
+        # eyes -- back-to-front so each layer can be drawn opaque without
+        # losing the one behind it: sclera, limbal ring, iris, pupil,
+        # catchlight. Then anatomical eyelid occlusion and lips.
+        # Sclera carries a tiny per-character warm/cool jitter so a crowd
+        # doesn't share one identical pure-white eye.
+        sclera = (
+            min(1.0, _EYE_WHITE[0] + (app.seed - 0.5) * 0.04),
+            min(1.0, _EYE_WHITE[1] + (app.seed - 0.5) * 0.02),
+            min(1.0, _EYE_WHITE[2] - (app.seed - 0.5) * 0.02),
+        )
+        add(mesh_mod.build_eyes(self.bones, self.shape),       sclera,         3)
+        add(mesh_mod.build_limbus(self.bones, self.shape),     _EYE_LIMBUS,    3)
+        add(mesh_mod.build_iris(self.bones, self.shape),       app.eye_color,  3)
+        add(mesh_mod.build_pupils(self.bones, self.shape),     app.pupil_color, 3)
+        add(mesh_mod.build_catchlights(self.bones, self.shape), _EYE_CATCH,    3)
         add(mesh_mod.build_eyelids(self.bones, self.shape, app.expression),
             app.skin_color, 0)
         add(mesh_mod.build_lips(self.bones, self.shape, app.expression),
