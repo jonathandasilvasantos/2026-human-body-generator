@@ -299,6 +299,13 @@ class Character:
                                      flare=app.dress_flare),
                 app.top_color, 1)
         else:
+            # Fabric-colored underlayer on the arms, drawn before the sleeve
+            # so momentary skin-through-sleeve clipping reveals garment
+            # color instead of bare skin. Only applicable to sleeved tops.
+            add(garments.build_sleeve_underlayer(self.bones, app.top_style,
+                                                 top_inflate=app.top_inflate,
+                                                 length_scale=app.top_length_scale),
+                app.top_color, 1)
             add(garments.build_top(self.bones, app.top_style,
                                    inflate=app.top_inflate,
                                    length_scale=app.top_length_scale),
