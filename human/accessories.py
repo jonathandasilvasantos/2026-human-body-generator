@@ -188,19 +188,39 @@ def build_eyebrows(bones) -> SkinnedMesh:
         return _empty_mesh()
     head_idx, parent, R, length, _r, head_w, head_d = info
 
-    # Eyebrows sit on the brow ridge, just above the eye line. A bit thicker
-    # than a strict anatomical brow so they read at typical viewing distance.
-    sep = length * 0.115
-    y   = length * (H_BROW - 0.01)
-    z   = head_d * 0.86
-    hx, hy = length * 0.075, length * 0.018
+    # Eyebrows are composed from three small patches per side: an inner
+    # head (closer to the nose, slightly lower), a middle body (peak of
+    # the arch), and an outer tail (fades out toward the temple, slightly
+    # higher). This replaces the single horizontal bar and prevents the
+    # fixed "angry" look by arching upward, not inward.
+    sep_inner = length * 0.085
+    sep_mid   = length * 0.118
+    sep_outer = length * 0.148
+    y_inner = length * (H_BROW - 0.020)
+    y_mid   = length * (H_BROW + 0.005)
+    y_outer = length * (H_BROW - 0.002)
+    z = head_d * 0.86
+    hy = length * 0.013
+    inner_size  = (length * 0.024, hy)
+    mid_size    = (length * 0.032, hy * 1.05)
+    outer_size  = (length * 0.026, hy * 0.85)
 
-    chunks = [
-        prim.flat_patch((+sep, y, z), (hx, hy), head_idx, parent,
-                        normal=(0, 0, 1), subdiv=(6, 2), thickness=0.004),
-        prim.flat_patch((-sep, y, z), (hx, hy), head_idx, parent,
-                        normal=(0, 0, 1), subdiv=(6, 2), thickness=0.004),
-    ]
+    chunks = []
+    for side in (+1.0, -1.0):
+        chunks += [
+            prim.flat_patch((side * sep_inner, y_inner, z), inner_size,
+                            head_idx, parent,
+                            normal=(side * 0.10, -0.12, 1.0),
+                            subdiv=(3, 2), thickness=0.0035),
+            prim.flat_patch((side * sep_mid, y_mid, z), mid_size,
+                            head_idx, parent,
+                            normal=(side * 0.05, 0.05, 1.0),
+                            subdiv=(4, 2), thickness=0.0035),
+            prim.flat_patch((side * sep_outer, y_outer, z), outer_size,
+                            head_idx, parent,
+                            normal=(side * 0.25, -0.02, 1.0),
+                            subdiv=(3, 2), thickness=0.003),
+        ]
     return _finish(chunks, R)
 
 

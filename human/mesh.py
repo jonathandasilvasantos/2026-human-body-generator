@@ -586,6 +586,74 @@ H_HAIRLINE  = 0.80
 H_TOP       = 1.00
 
 
+def _skull_shell(cy, half_h, profile, bone_index, parent_index,
+                 rings=28, radial=32, weight_self=1.0):
+    """Single closed mesh for a skull/face shell.
+
+    Cross-section at height-parameter ``t`` in [-1, 1] (chin -> crown) is
+    an ellipse whose X/Z radii and centre-Z offset come from
+    ``profile(t) -> (rx, rz, cz)``. Like a classic UV sphere but with
+    Y-varying radii, so the silhouette is a proper head shape rather
+    than a ball of bumps.
+    """
+    v, n, ba, bb, w = [], [], [], [], []
+    profile_cache = []
+    for i in range(rings + 1):
+        theta = math.pi * (i / rings)
+        t = math.cos(theta)
+        p = profile(t)
+        if len(p) == 3:
+            p = (p[0], p[1], p[1], p[2])   # (rx, rz_front, rz_back, cz)
+        profile_cache.append(p)
+
+    for i in range(rings + 1):
+        theta = math.pi * (i / rings)
+        ct = math.cos(theta)
+        st = math.sin(theta)
+        t = ct
+        rx, rz_f, rz_b, cz = profile_cache[i]
+        for j in range(radial):
+            phi = 2.0 * math.pi * (j / radial)
+            sp, cp = math.sin(phi), math.cos(phi)
+            # Choose front/back depth based on which hemisphere this vertex
+            # is on; smoothly blend near the equator (sp~0) to avoid a
+            # visible seam at +/-X.
+            blend = 0.5 * (1.0 + sp)        # 0 at back pole, 1 at front pole
+            blend_s = blend * blend * (3 - 2 * blend)
+            rz = rz_b + (rz_f - rz_b) * blend_s
+            px = st * cp * rx
+            py = cy + t * half_h
+            pz = st * sp * rz + cz
+            v.append((px, py, pz))
+            if i == 0:
+                nx, ny, nz = 0.0, 1.0, 0.0
+            elif i == rings:
+                nx, ny, nz = 0.0, -1.0, 0.0
+            else:
+                nx = (st * cp) / max(rx, 1e-6)
+                ny = t / max(half_h, 1e-6)
+                nz = (st * sp) / max(rz, 1e-6)
+                inv = 1.0 / (math.sqrt(nx * nx + ny * ny + nz * nz) + 1e-8)
+                nx *= inv; ny *= inv; nz *= inv
+            n.append((nx, ny, nz))
+            ba.append(bone_index)
+            bb.append(parent_index if parent_index >= 0 else bone_index)
+            w.append((weight_self, 1.0 - weight_self))
+
+    idx = []
+    for i in range(rings):
+        for j in range(radial):
+            a = i * radial + j
+            b = i * radial + (j + 1) % radial
+            c = (i + 1) * radial + j
+            d = (i + 1) * radial + (j + 1) % radial
+            idx.extend([a, c, b, b, c, d])
+
+    return (np.asarray(v, np.float32), np.asarray(n, np.float32),
+            np.asarray(ba, np.int32), np.asarray(bb, np.int32),
+            np.asarray(w, np.float32), np.asarray(idx, np.uint32))
+
+
 def _head_compound(head_idx, parent_idx, tip, radius, gender):
     """Build a compound head with anthropometrically proportioned features.
 
@@ -593,77 +661,172 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender):
     skull. We place landmarks as fractions of that length and size features
     from the same length (not from the bone radius, which was too generous
     and gave ping-pong-ball proportions).
+
+    Head is assembled from several overlapping ellipsoids rather than one
+    sphere, so the silhouette shows the cranium/face/jaw distinction:
+      - cranial vault (upper back, deeper than wide, occiput pushed back)
+      - face plate (narrower front-lower, slight forward lean)
+      - mandible (jaw block tapering from angles to chin)
     """
     length = float(np.linalg.norm(tip))
     R = mathx.align_y_to(tip) if length > 1e-6 else np.eye(3, dtype=np.float32)
 
-    # Skull dimensions. Real-world adult head: ~23cm tall, ~15cm wide,
-    # ~21cm deep -> ratios ~1.0 : 0.65 : 0.90.
+    # Reference half-widths / depths. Real-world adult head proportions
+    # (height : width : depth) ~= 1.0 : 0.65 : 0.90.
     w_factor = 0.34 * (1.06 if gender == "male" else 0.98)
-    d_factor = 0.38
+    d_factor = 0.40
     head_w = length * w_factor
     head_d = length * d_factor
+
+    chunks = []
+
+    # --- Single profiled skull shell --------------------------------------
+    # t in [-1, 1]: -1 = chin apex, 0 ~ cheekbone/zygomatic line, +1 = crown.
+    # We scale rx/rz with t so the silhouette shows:
+    #   * a rounded crown narrower than the temples
+    #   * max cheekbone width near t ~ 0.1
+    #   * a tapered jawline narrowing smoothly toward the chin
+    #   * occiput pushed back in Z at the crown, forehead slightly forward
+    # Gender dimorphism: male has wider jaw (less taper) and more forward
+    # chin; female has more pronounced jaw taper.
+    jaw_taper = 0.38 if gender == "male" else 0.50   # chin width reduction
+    # Skull depth is not front/back symmetric: the occipital bulge sits
+    # behind the head so much further than the forehead protrudes. We
+    # split the depth into a front half and a back half and handle them
+    # independently in the primitive below.
+
+    def profile(t):
+        # Width (rx) profile ------------------------------------------------
+        if t >= 0:
+            rx_scale = 1.0 - 0.08 * t * t
+        else:
+            u = -t
+            rx_scale = 1.0 - jaw_taper * (u * u * (3 - 2 * u))
+            rx_scale = max(rx_scale, 0.28)
+        rx = head_w * rx_scale
+
+        # Asymmetric front / back depth ------------------------------------
+        # Front (face plane) stays close to the base head_d at the midface
+        # and tapers a bit toward chin and crown. Back (occiput) is rounder
+        # and a bit deeper at the crown so the profile shows a true skull.
+        if t >= 0:
+            rz_f = head_d * (1.00 - 0.16 * t * t)     # forehead slopes back
+        else:
+            rz_f = head_d * max(0.96 + 0.14 * t, 0.72)  # chin shallower
+        if t >= 0:
+            rz_b = head_d * (1.08 + 0.06 * t - 0.14 * t * t)
+        else:
+            rz_b = head_d * max(1.06 + 0.28 * t, 0.78)
+
+        # Forward shift of the lower face: build a chin that pushes the
+        # skull forward below the mouth, peaking at the chin tip.
+        if t < -0.3:
+            u = (-t - 0.3) / 0.7
+            chin_push = 0.14 * u * u * (3 - 2 * u)
+        else:
+            chin_push = 0.0
+        cz = head_d * chin_push
+        return rx, rz_f, rz_b, cz
+
+    # Skull spans from chin (y=length*H_CHIN) to crown (y=length*H_TOP).
     skull_cy = length * (H_TOP + H_CHIN) * 0.5
-    skull_cy_offset = length * 0.02           # slight upward push for rounder crown
-    skull_r = (head_w, length * (H_TOP - H_CHIN) * 0.5, head_d)
-
-    chunks = [
-        prim.ellipsoid((0.0, skull_cy + skull_cy_offset, 0.0), skull_r,
-                       head_idx, parent_idx, weight_self=1.0, rings=18, radial=28),
-    ]
-
-    # Nose: bridge (longer ellipsoid) + tip (small).
-    nose_y_bridge = length * (H_EYE + H_NOSE_BASE) * 0.5
-    nose_y_tip    = length * (H_NOSE_BASE + 0.04)
-    # Single unified nose: one elongated ellipsoid from brow down to tip,
-    # protruding forward. Using one shape avoids the "two bumps" artefact
-    # of a separate bridge + tip.
-    nose_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.55)
-    chunks.append(prim.ellipsoid(
-        (0.0, nose_cy, head_d * 0.95),
-        (length * 0.05,
-         length * (H_EYE - H_NOSE_BASE) * 0.75,
-         length * 0.08),
-        head_idx, parent_idx, rings=12, radial=14,
+    skull_half = length * (H_TOP - H_CHIN) * 0.5
+    chunks.append(_skull_shell(
+        skull_cy, skull_half, profile,
+        head_idx, parent_idx, rings=32, radial=40, weight_self=1.0,
     ))
 
-    # Brow ridge: thin wide ellipsoid just above eye line.
-    brow_radii = (head_w * 0.60, length * 0.025, head_d * 0.12)
-    brow_z = head_d * 0.80 * (1.05 if gender == "male" else 1.0)
-    brow_radii = (brow_radii[0], brow_radii[1] * (1.4 if gender == "male" else 1.0), brow_radii[2])
+    # Chin protuberance is carried by the skull shell profile (forward cz
+    # offset at t<-0.5). No floating blob is added here.
+
+    # --- Nose: bridge + tip + wings ---------------------------------------
+    # Bridge: a narrow ellipsoid from the radix (between the eyebrows) down
+    # to just above the tip. Narrower in X than before, and longer in Y so
+    # the nose has a visible bridge line.
+    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.70)
+    bridge_rx = length * (0.030 if gender == "male" else 0.026)
+    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.60
+    bridge_rz = length * 0.060
     chunks.append(prim.ellipsoid(
-        (0.0, length * H_BROW, brow_z), brow_radii,
-        head_idx, parent_idx, rings=8, radial=18,
+        (0.0, bridge_cy, head_d * 0.90),
+        (bridge_rx, bridge_ry, bridge_rz),
+        head_idx, parent_idx, rings=10, radial=12,
     ))
 
-    # Cheekbones: gentle swells flanking the nose.
-    cheek_y = length * (H_NOSE_BASE + 0.04)
-    cheek_r = (length * 0.055, length * 0.05, length * 0.035)
+    # Nose tip: rounded bulb at the base of the nose, protruding forward.
+    tip_cy = length * (H_NOSE_BASE + 0.02)
+    tip_rx = length * (0.050 if gender == "male" else 0.044)
+    tip_ry = length * 0.040
+    tip_rz = length * 0.055
+    chunks.append(prim.ellipsoid(
+        (0.0, tip_cy, head_d * 0.95),
+        (tip_rx, tip_ry, tip_rz),
+        head_idx, parent_idx, rings=10, radial=14,
+    ))
+
+    # Nostril wings (alae): two small lobes flanking the tip, implying
+    # nostrils without modelling a cavity. Placed slightly behind the tip
+    # so the tip still reads as the forwardmost point.
+    wing_rx = length * 0.025
+    wing_ry = length * 0.024
+    wing_rz = length * 0.032
+    wing_sep = length * (0.040 if gender == "male" else 0.034)
+    wing_cy = length * (H_NOSE_BASE + 0.005)
+    wing_cz = head_d * 0.87
     chunks += [
-        prim.ellipsoid((+head_w * 0.55, cheek_y, head_d * 0.60), cheek_r,
-                       head_idx, parent_idx, rings=8, radial=14),
-        prim.ellipsoid((-head_w * 0.55, cheek_y, head_d * 0.60), cheek_r,
-                       head_idx, parent_idx, rings=8, radial=14),
-    ]
-
-    # Chin: small ellipsoid under the mouth to give a chin point.
-    chin_radii = (head_w * 0.30, length * 0.05, head_d * 0.35)
-    if gender == "male":
-        chin_radii = (chin_radii[0] * 1.15, chin_radii[1] * 1.2, chin_radii[2] * 1.05)
-    chunks.append(prim.ellipsoid(
-        (0.0, length * (H_CHIN + 0.05), head_d * 0.55), chin_radii,
-        head_idx, parent_idx, rings=8, radial=14,
-    ))
-
-    # Ears: thin, hugging the sides of the skull so they don't read as
-    # circular dots on the face from a distance.
-    ear_r = (length * 0.012, length * 0.055, length * 0.030)
-    chunks += [
-        prim.ellipsoid((+head_w * 1.02, length * (H_EYE - 0.02), -head_d * 0.02), ear_r,
+        prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
+                       (wing_rx, wing_ry, wing_rz),
                        head_idx, parent_idx, rings=8, radial=12),
-        prim.ellipsoid((-head_w * 1.02, length * (H_EYE - 0.02), -head_d * 0.02), ear_r,
+        prim.ellipsoid((-wing_sep, wing_cy, wing_cz),
+                       (wing_rx, wing_ry, wing_rz),
                        head_idx, parent_idx, rings=8, radial=12),
     ]
+
+    # --- Brow ridge -------------------------------------------------------
+    # Subtle supraorbital ridge: two short arched swells above each orbit
+    # (not a single horizontal bar). Male's is more prominent. Tucked
+    # deep enough that only a soft highlight pokes through the shell.
+    brow_ry = length * (0.012 if gender == "male" else 0.008)
+    brow_rz = length * (0.020 if gender == "male" else 0.015)
+    brow_rx = length * 0.070
+    brow_y = length * (H_BROW - 0.015)
+    brow_sep = length * 0.105
+    brow_z = head_d * 0.65
+    chunks += [
+        prim.ellipsoid((+brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
+                       head_idx, parent_idx, rings=6, radial=14),
+        prim.ellipsoid((-brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
+                       head_idx, parent_idx, rings=6, radial=14),
+    ]
+
+    # Cheekbones are now implicit in the skull shell's profile; no extra
+    # blobs are added here. Future cycles may re-introduce them as subtle
+    # inset swells, but the prior-cycle floating discs are removed.
+
+    # --- Ears -------------------------------------------------------------
+    # Ear top aligned roughly with the brow line, bottom around the nose
+    # base -- the canonical anatomical positioning. Built from two pieces
+    # per side: a helix (outer rim) and a lobe. They hug the skull and
+    # tilt back slightly so they read correctly in profile.
+    ear_top_y = length * (H_BROW - 0.02)
+    ear_bot_y = length * (H_NOSE_BASE - 0.02)
+    ear_cy = 0.5 * (ear_top_y + ear_bot_y)
+    ear_half_h = 0.5 * (ear_top_y - ear_bot_y)
+    ear_cz = -head_d * 0.10          # pushed back: ear canal sits behind eye line
+    ear_x = head_w * 0.98
+    for side in (+1.0, -1.0):
+        # Helix: tall narrow vertical capsule that forms the outer rim.
+        chunks.append(prim.ellipsoid(
+            (side * ear_x, ear_cy + ear_half_h * 0.05, ear_cz),
+            (length * 0.020, ear_half_h * 1.10, length * 0.060),
+            head_idx, parent_idx, rings=10, radial=14,
+        ))
+        # Lobe: small bulb at the bottom, slightly protruding forward.
+        chunks.append(prim.ellipsoid(
+            (side * ear_x, ear_bot_y - length * 0.005, ear_cz + length * 0.010),
+            (length * 0.024, length * 0.026, length * 0.038),
+            head_idx, parent_idx, rings=8, radial=12,
+        ))
 
     return [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
 
@@ -804,7 +967,7 @@ def _head_info(bones):
     r = bones[head_idx][4]
     R = mathx.align_y_to(tip)
     length = float(np.linalg.norm(tip))
-    head_d = length * 0.38
+    head_d = length * 0.40
     head_w = length * 0.34
     return head_idx, parent, R, length, r, head_w, head_d
 
@@ -814,11 +977,13 @@ def build_eyes(bones) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    # Eye line is at y = length*H_EYE; eyes sit on the front of the skull.
-    sep  = length * 0.115
+    # Eye line at y = length*H_EYE. Pushed deeper into the orbit (lower z,
+    # smaller radius) so the eyelids read as real folds over a set-in
+    # eyeball rather than a surface disc.
+    sep  = length * 0.108
     y    = length * H_EYE
-    z    = head_d * 0.78
-    eye_r = length * 0.060
+    z    = head_d * 0.70
+    eye_r = length * 0.050
     radii = (eye_r, eye_r * 0.95, eye_r * 0.9)
     chunks = [
         prim.ellipsoid((+sep, y, z), radii, head_idx, parent, rings=12, radial=18),
@@ -834,10 +999,10 @@ def build_iris(bones) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep  = length * 0.115
+    sep  = length * 0.108
     y    = length * H_EYE
-    z    = head_d * 0.78
-    eye_r = length * 0.060
+    z    = head_d * 0.70
+    eye_r = length * 0.050
     # iris disc sits on the front surface of the eye white
     iris_r = eye_r * 0.55
     radii = (iris_r, iris_r, iris_r * 0.3)
@@ -858,10 +1023,10 @@ def build_pupils(bones) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
-    sep  = length * 0.115
+    sep  = length * 0.108
     y    = length * H_EYE
-    z    = head_d * 0.78
-    eye_r = length * 0.060
+    z    = head_d * 0.70
+    eye_r = length * 0.050
     pr = eye_r * 0.22
     radii = (pr, pr, pr * 0.3)
     chunks = [
@@ -891,13 +1056,14 @@ def build_eyelids(bones) -> SkinnedMesh:
     eye_r = length * 0.060
 
     # Slightly in front of the sclera/iris so depth testing naturally hides
-    # the upper/lower poles of the eye sphere.
-    lid_z = z + eye_r * 0.92
-    hx = length * 0.070
-    upper_hy = length * 0.016
-    lower_hy = length * 0.010
-    upper_y = y + eye_r * 0.64
-    lower_y = y - eye_r * 0.58
+    # the upper/lower poles of the eye sphere. Upper lid is thicker and
+    # tilts outward-up for an almond shape; lower lid is thinner.
+    lid_z = z + eye_r * 0.96
+    hx = length * 0.068
+    upper_hy = length * 0.022
+    lower_hy = length * 0.012
+    upper_y = y + eye_r * 0.70
+    lower_y = y - eye_r * 0.60
 
     chunks = []
     for side in (+1.0, -1.0):
@@ -925,28 +1091,57 @@ def build_eyelids(bones) -> SkinnedMesh:
 
 
 def build_lips(bones) -> SkinnedMesh:
-    """Upper + lower lip as two thin squashed ellipsoids on the face."""
+    """Upper + lower lip with a subtle cupid's bow.
+
+    Upper lip is built from two halves (left + right peak) with a small
+    central dip between them, giving a readable cupid's bow. The lower
+    lip is a single fuller pillow.
+    """
     info = _head_info(bones)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
     y_mouth = length * H_MOUTH
-    z = head_d * 0.88
-    # upper lip: wider + slight dip
-    # Thin, mostly-flat lips pressed against the face plane. Keeping both
-    # the vertical half-extent (ry) small and the depth (rz) shallow so the
-    # lips read as a mouth line rather than two stacked domes.
-    upper = prim.ellipsoid(
-        (0.0, y_mouth + length * 0.012, z),
-        (length * 0.09, length * 0.008, length * 0.012),
-        head_idx, parent, rings=5, radial=18,
+    z = head_d * 0.86
+
+    # Upper lip: two symmetric lobes, narrow, peaked slightly off-center.
+    up_half_sep = length * 0.028
+    up_rx = length * 0.048
+    up_ry = length * 0.011
+    up_rz = length * 0.014
+    up_y = y_mouth + length * 0.010
+    upper_L = prim.ellipsoid(
+        (+up_half_sep, up_y, z),
+        (up_rx, up_ry, up_rz),
+        head_idx, parent, rings=6, radial=14,
     )
+    upper_R = prim.ellipsoid(
+        (-up_half_sep, up_y, z),
+        (up_rx, up_ry, up_rz),
+        head_idx, parent, rings=6, radial=14,
+    )
+    # Mouth corners (tucked slightly back so they don't pop out).
+    corner_rx = length * 0.014
+    corner_ry = length * 0.010
+    corner_rz = length * 0.010
+    corner_x = length * 0.075
+    corner_L = prim.ellipsoid(
+        (+corner_x, y_mouth + length * 0.001, z - length * 0.003),
+        (corner_rx, corner_ry, corner_rz),
+        head_idx, parent, rings=5, radial=10,
+    )
+    corner_R = prim.ellipsoid(
+        (-corner_x, y_mouth + length * 0.001, z - length * 0.003),
+        (corner_rx, corner_ry, corner_rz),
+        head_idx, parent, rings=5, radial=10,
+    )
+    # Lower lip: wider, fuller pillow.
     lower = prim.ellipsoid(
-        (0.0, y_mouth - length * 0.006, z),
-        (length * 0.085, length * 0.010, length * 0.014),
-        head_idx, parent, rings=5, radial=18,
+        (0.0, y_mouth - length * 0.010, z + length * 0.002),
+        (length * 0.082, length * 0.014, length * 0.016),
+        head_idx, parent, rings=6, radial=20,
     )
-    chunks = [upper, lower]
+    chunks = [upper_L, upper_R, corner_L, corner_R, lower]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
