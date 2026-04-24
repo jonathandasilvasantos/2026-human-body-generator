@@ -101,6 +101,7 @@ class Viewer:
         self._lipsync_t0: float | None = None
         self._lipsync_proc: subprocess.Popen | None = None
         self._lipsync_saved_expression: str | None = None
+        self._lipsync_last_weights: dict[str, float] = {}
         self._camera_default = (0.0, 0.18, 0.0, 2.7, 0.0, 0.08)
 
         # Animation library: every .bvh under ./animations is cyclable.
@@ -395,6 +396,7 @@ class Viewer:
             self.character.build_gpu()
             self._lipsync_saved_expression = None
         self._lipsync_t0 = None
+        self._lipsync_last_weights = {}
         print("[lipsync] stopped")
 
     def _tick_lipsync(self) -> bool:
@@ -411,10 +413,26 @@ class Viewer:
         # Snap very-small weights to zero so we don't rebuild geometry for
         # sub-visible motion; small threshold preserves tail decay.
         weights = {k: v for k, v in weights.items() if v > 0.01}
+        # Skip the full face rebuild when no channel has changed by more
+        # than ~2%. build_gpu() rebuilds every drawable on the character
+        # (measured ~35 ms on this machine); guarding it frees budget for
+        # audio-to-display sync when the mouth is coasting between
+        # visemes. Audio clock drives sampling, so this never desyncs.
+        if self._weights_similar(self._lipsync_last_weights, weights):
+            return False
+        self._lipsync_last_weights = weights
         app = self.character.appearance
         self.character.appearance = replace(app, blendshapes=weights)
         self.character.build_gpu()
         return False
+
+    @staticmethod
+    def _weights_similar(a: dict, b: dict, eps: float = 0.02) -> bool:
+        keys = set(a) | set(b)
+        for k in keys:
+            if abs(a.get(k, 0.0) - b.get(k, 0.0)) > eps:
+                return False
+        return True
 
     # ---- per frame --------------------------------------------------------
 
