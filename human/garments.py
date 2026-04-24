@@ -49,11 +49,14 @@ def _mesh_from_chunks(chunks) -> SkinnedMesh:
 TOP_BONE_SETS = {
     # Tops stop at the natural waist instead of wrapping the whole pelvis.
     # That keeps the torso from becoming a single block while bottoms still
-    # overlap enough to hide seams in motion.
-    "tank":       ["chest", "spine", "pelvis", "clav_L", "clav_R"],
-    "tshirt":     ["chest", "spine", "pelvis", "clav_L", "clav_R",
+    # overlap enough to hide seams in motion. `neck` is included so the
+    # collar follows head/neck motion: without it, tilting or rotating the
+    # head exposes the underside of the jaw / back of the beard through the
+    # chest's static collar dome.
+    "tank":       ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R"],
+    "tshirt":     ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R",
                    "uarm_L", "uarm_R"],
-    "longsleeve": ["chest", "spine", "pelvis", "clav_L", "clav_R",
+    "longsleeve": ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R",
                    "uarm_L", "uarm_R", "farm_L", "farm_R"],
 }
 

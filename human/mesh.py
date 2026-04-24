@@ -216,6 +216,10 @@ _GARMENT_CAP_SCALE = {
     "chest":  (0.55, 0.72),
     "spine":  (0.18, 0.76),
     "pelvis": (0.22, 0.48),
+    # Neck is included in the top bone set so the collar follows the head.
+    # Shallow top cap so the collar rim stops below the jawline instead of
+    # swallowing the skull; deeper bottom cap blends into the chest dome.
+    "neck":   (0.15, 0.60),
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
     "foot_L": (0.90, 0.25),
     "foot_R": (0.90, 0.25),
