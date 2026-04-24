@@ -24,11 +24,17 @@ Controls:
     M / F             - regenerate forcing male / female
     S                 - new random shape (keep gender)
     C                 - new random clothes/hair/colors (keep shape)
-    W                 - toggle walk animation
+    W                 - toggle procedural walk animation
+    A                 - toggle BVH playback (if one is loaded)
+    + / -             - cycle to next / previous BVH in ./animations
     [ / ]             - slower / faster walk
     P                 - random static pose        T - T-pose
     B                 - toggle skeleton overlay
     Esc / Q           - quit
+
+The currently playing animation name is shown as a label in the top-left.
+Any .bvh file placed under ./animations (recursively) is picked up on
+startup; both Mixamo and Bandai-Namco bone naming are supported.
 """
 
 import argparse

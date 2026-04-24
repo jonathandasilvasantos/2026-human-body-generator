@@ -27,6 +27,34 @@ from . import bvh as bvh_mod
 from . import mathx
 
 
+# Bandai Namco Research Motion Dataset uses a short-named humanoid rig.
+BANDAI_MAP: Dict[str, str] = {
+    "Hips":         "pelvis",
+    "Spine":        "spine",
+    "Chest":        "chest",
+    "Neck":         "neck",
+    "Head":         "head",
+
+    "Shoulder_L":   "clav_L",
+    "UpperArm_L":   "uarm_L",
+    "LowerArm_L":   "farm_L",
+    "Hand_L":       "hand_L",
+
+    "Shoulder_R":   "clav_R",
+    "UpperArm_R":   "uarm_R",
+    "LowerArm_R":   "farm_R",
+    "Hand_R":       "hand_R",
+
+    "UpperLeg_L":   "thigh_L",
+    "LowerLeg_L":   "shin_L",
+    "Foot_L":       "foot_L",
+
+    "UpperLeg_R":   "thigh_R",
+    "LowerLeg_R":   "shin_R",
+    "Foot_R":       "foot_R",
+}
+
+
 # Default Mixamo -> our bone name map.
 MIXAMO_MAP: Dict[str, str] = {
     "Hips":          "pelvis",
@@ -282,8 +310,22 @@ class Animation:
         return pose, root_offset
 
 
+def _auto_name_map(bvh: bvh_mod.BVHFile) -> Dict[str, str]:
+    """Pick Mixamo vs Bandai map by counting which one matches more joints."""
+    names = {_canonical(j.name).lower() for j in bvh.joints}
+    mixamo_hits = sum(1 for k in MIXAMO_MAP if k.lower() in names)
+    bandai_hits = sum(1 for k in BANDAI_MAP if k.lower() in names)
+    return BANDAI_MAP if bandai_hits > mixamo_hits else MIXAMO_MAP
+
+
 def load(path: str, bones, name_map: Optional[Dict[str, str]] = None,
          unit_scale: float = 0.01) -> Animation:
-    """Convenience loader: parse + build retargeted Animation."""
+    """Convenience loader: parse + build retargeted Animation.
+
+    When ``name_map`` is not given, the loader inspects the BVH joint names
+    and picks the best-matching built-in map (Mixamo or Bandai-Namco).
+    """
     bvh = bvh_mod.parse(path)
+    if name_map is None:
+        name_map = _auto_name_map(bvh)
     return Animation(bvh, bones, name_map=name_map, unit_scale=unit_scale)

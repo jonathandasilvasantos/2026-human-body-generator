@@ -110,6 +110,15 @@ class Appearance:
     dress_length_frac: float = 1.0
     dress_flare: float = 1.3
 
+    # clothing prints (all-over pattern) and chest stamps (localised decal).
+    # Driven explicitly from Python rather than from a shader hash so that
+    # characters visibly cycle through the available styles. Style 0 means
+    # "no effect"; strength 0 likewise disables.
+    print_style: int = 0          # 0=none 1=stripes 2=dots 3=plaid 4=noise
+    print_strength: float = 0.0
+    stamp_style: int = 0          # 0=none 1=ring 2=diamond 3=cross 4=star
+    stamp_strength: float = 0.0
+
 
 def random_appearance(gender: str) -> Appearance:
     seed = random.random()
@@ -188,12 +197,34 @@ def random_appearance(gender: str) -> Appearance:
            min(1.0, skin[1] * 0.55),
            min(1.0, skin[2] * 0.55))
 
+    # --- prints / stamps ---
+    # Probabilities tuned so variety is visible across 4-5 regenerations.
+    # 45% plain, 55% patterned; of those, uniform over the 4 styles.
+    if random.random() < 0.55:
+        print_style = random.randint(1, 4)
+        print_strength = random.uniform(0.40, 0.75)
+    else:
+        print_style = 0
+        print_strength = 0.0
+
+    # Chest stamps are more eye-catching, so rarer: 40%.
+    if random.random() < 0.40:
+        stamp_style = random.randint(1, 4)
+        stamp_strength = random.uniform(0.65, 0.95)
+    else:
+        stamp_style = 0
+        stamp_strength = 0.0
+
     return Appearance(
         gender=gender,
         skin_color=skin,
         eye_color=eye,
         lip_color=lip,
         seed=seed,
+        print_style=print_style,
+        print_strength=print_strength,
+        stamp_style=stamp_style,
+        stamp_strength=stamp_strength,
         hair_style=hair_style,
         hair_color=hair,
         eyebrow_color=eyebrow,

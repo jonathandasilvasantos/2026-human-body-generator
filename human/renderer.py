@@ -39,6 +39,12 @@ out vec4 frag;
 uniform vec3  u_color;
 uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye, 4 = shoe
 uniform float u_seed;   // per-character random seed in [0,1]
+// Clothing pattern controls (per-character; Python-driven for guaranteed
+// variety instead of hash-gated). 0 means "no effect".
+uniform int   u_print_style;    // 0=none 1=stripes 2=dots 3=plaid 4=noise
+uniform float u_print_strength; // 0..1
+uniform int   u_stamp_style;    // 0=none 1=ring 2=diamond-ring 3=cross 4=star
+uniform float u_stamp_strength; // 0..1
 
 // cheap 3D hash -> [0,1]
 float hash3(vec3 p) {
@@ -132,55 +138,73 @@ void main() {
         float lint = fbm(sample_p * 24.0);
         albedo *= 0.96 + 0.07 * lint;
 
-        // PROCEDURAL PRINTS: UV-free tile coordinates. A cylindrical angle
-        // term gives seamless wraparound on torso/skirt shells, while a small
-        // world-space component keeps sleeves/pants aligned with fabric flow.
-        float theta = atan(v_pos.z, v_pos.x) / 6.2831853;
-        vec2 tile_uv = vec2(theta * 5.0 + v_pos.x * 1.7, v_pos.y * 5.4);
-        float style = hash3(u_color * vec3(7.1, 11.3, 17.7) + vec3(u_seed));
-        float print_mask = 0.0;
-        if (style < 0.34) {
-            // rugby / Breton-style stripes
-            print_mask = smoothstep(0.58, 0.66, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
-        } else if (style < 0.67) {
-            // polka dots with staggered rows to hide repetition
-            vec2 dots_uv = tile_uv * vec2(1.25, 1.0);
-            dots_uv.x += 0.5 * step(0.5, fract(dots_uv.y * 0.5));
-            print_mask = circle_tile(dots_uv, 0.22);
-        } else {
-            // soft check/plaid block intersections
-            float sx = smoothstep(0.72, 0.80, 0.5 + 0.5 * cos(tile_uv.x * 6.2831853));
-            float sy = smoothstep(0.70, 0.78, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
-            print_mask = max(sx * 0.75, sy);
-        }
-
+        // PROCEDURAL PRINTS (explicit style, Python-driven for variety).
+        // UV-free tile coordinates: cylindrical angle for seamless torso wrap,
+        // plus a small world-space component so sleeves/pants stay aligned.
         float lum = dot(u_color, vec3(0.299, 0.587, 0.114));
-        vec3 light_print = mix(u_color, vec3(1.0), 0.46);
-        vec3 dark_print = u_color * 0.42;
+        vec3 light_print = mix(u_color, vec3(1.0), 0.52);
+        vec3 dark_print  = u_color * 0.38;
         vec3 print_color = (lum < 0.48) ? light_print : dark_print;
-        float print_strength = 0.38 + 0.18 * hash3(u_color * 19.0 + vec3(u_seed * 5.0));
-        albedo = mix(albedo, print_color, print_mask * print_strength);
 
-        // Localized chest decal: a front-facing, torso-height stamp. This is
-        // effectively a procedural decal projection with soft spatial gating,
-        // so it does not bleed onto sleeves, lower garments, or shoes.
-        vec2 decal_uv = vec2(v_pos.x / 0.12, (v_pos.y - 0.34) / 0.13);
-        float front_gate = smoothstep(0.34, 0.62, n.z);
-        float x_gate = 1.0 - smoothstep(0.72, 0.98, abs(decal_uv.x));
-        float y_gate = 1.0 - smoothstep(0.82, 1.06, abs(decal_uv.y));
-        float decal_gate = front_gate * x_gate * y_gate;
-        float decal_style = hash3(u_color * 31.0 + vec3(u_seed * 9.0));
-        float decal_mask = 0.0;
-        if (decal_style < 0.50) {
-            decal_mask = circle_tile(decal_uv * 0.5 + 0.5, 0.32);
-            decal_mask *= 1.0 - circle_tile(decal_uv * 0.5 + 0.5, 0.13);
-        } else {
-            decal_mask = diamond(decal_uv, 0.46);
-            decal_mask *= 1.0 - diamond(decal_uv, 0.18);
+        if (u_print_style > 0 && u_print_strength > 0.001) {
+            float theta = atan(v_pos.z, v_pos.x) / 6.2831853;
+            vec2 tile_uv = vec2(theta * 5.0 + v_pos.x * 1.7, v_pos.y * 5.4);
+            float print_mask = 0.0;
+            if (u_print_style == 1) {
+                print_mask = smoothstep(0.58, 0.66, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
+            } else if (u_print_style == 2) {
+                vec2 dots_uv = tile_uv * vec2(1.25, 1.0);
+                dots_uv.x += 0.5 * step(0.5, fract(dots_uv.y * 0.5));
+                print_mask = circle_tile(dots_uv, 0.22);
+            } else if (u_print_style == 3) {
+                float sx = smoothstep(0.72, 0.80, 0.5 + 0.5 * cos(tile_uv.x * 6.2831853));
+                float sy = smoothstep(0.70, 0.78, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
+                print_mask = max(sx * 0.75, sy);
+            } else {
+                // camo-ish clumpy noise
+                print_mask = smoothstep(0.52, 0.78, fbm(sample_p * 6.0));
+            }
+            albedo = mix(albedo, print_color, print_mask * u_print_strength);
         }
-        decal_mask *= decal_gate;
-        vec3 decal_color = (lum < 0.48) ? mix(u_color, vec3(1.0), 0.62) : u_color * 0.28;
-        albedo = mix(albedo, decal_color, decal_mask * 0.72);
+
+        // CHEST STAMP: front-facing torso decal with soft spatial gating so
+        // it can't bleed onto sleeves or the lower garment. Centered on a
+        // normalised torso-height band that works across character heights.
+        if (u_stamp_style > 0 && u_stamp_strength > 0.001) {
+            vec2 decal_uv = vec2(v_pos.x / 0.14, (v_pos.y - 0.36) / 0.17);
+            float front_gate = smoothstep(0.30, 0.60, n.z);
+            float x_gate = 1.0 - smoothstep(0.75, 1.05, abs(decal_uv.x));
+            float y_gate = 1.0 - smoothstep(0.85, 1.15, abs(decal_uv.y));
+            float decal_gate = front_gate * x_gate * y_gate;
+            float decal_mask = 0.0;
+            if (u_stamp_style == 1) {
+                // Ring (disc minus inner disc)
+                float r = length(decal_uv);
+                decal_mask = (1.0 - smoothstep(0.80, 0.95, r))
+                           * smoothstep(0.32, 0.48, r);
+            } else if (u_stamp_style == 2) {
+                // Diamond ring
+                decal_mask = diamond(decal_uv, 0.80);
+                decal_mask *= 1.0 - diamond(decal_uv, 0.42);
+            } else if (u_stamp_style == 3) {
+                // Plus / cross
+                float bar_w = 0.18;
+                float horiz = step(abs(decal_uv.y), bar_w) * step(abs(decal_uv.x), 0.80);
+                float vert  = step(abs(decal_uv.x), bar_w) * step(abs(decal_uv.y), 0.80);
+                decal_mask = max(horiz, vert);
+            } else {
+                // 5-pointed star (polar-angle petals)
+                float a = atan(decal_uv.y, decal_uv.x);
+                float r = length(decal_uv);
+                float petals = 0.60 + 0.30 * cos(5.0 * a);
+                decal_mask = 1.0 - smoothstep(petals - 0.05, petals + 0.05, r);
+            }
+            decal_mask *= decal_gate;
+            vec3 stamp_color = (lum < 0.48)
+                ? mix(u_color, vec3(1.0), 0.75)
+                : u_color * 0.22;
+            albedo = mix(albedo, stamp_color, decal_mask * u_stamp_strength);
+        }
     } else if (u_mode == 2) {
         // HAIR: strongly anisotropic fBm -- long wavelength along the head's
         // vertical axis, short across it -> reads as vertical strands.
@@ -289,6 +313,10 @@ class SkinProgram:
         self.u_color = glGetUniformLocation(self.prog, "u_color")
         self.u_mode  = glGetUniformLocation(self.prog, "u_mode")
         self.u_seed  = glGetUniformLocation(self.prog, "u_seed")
+        self.u_print_style    = glGetUniformLocation(self.prog, "u_print_style")
+        self.u_print_strength = glGetUniformLocation(self.prog, "u_print_strength")
+        self.u_stamp_style    = glGetUniformLocation(self.prog, "u_stamp_style")
+        self.u_stamp_strength = glGetUniformLocation(self.prog, "u_stamp_strength")
 
 
 class LineProgram:

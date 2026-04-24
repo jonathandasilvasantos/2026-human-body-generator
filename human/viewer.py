@@ -1,8 +1,10 @@
 """Fullscreen viewer + input handling + walk-cycle driver."""
 
 import math
+import os
 import random
 import time
+from pathlib import Path
 
 import numpy as np
 import glfw
@@ -11,6 +13,33 @@ from OpenGL.GL import *
 from . import animation as anim_mod
 from . import mathx, renderer, skeleton
 from .character import Character, random_appearance
+from .text_overlay import TextOverlay
+
+
+ANIMATIONS_DIR = Path(__file__).resolve().parent.parent / "animations"
+
+
+def _scan_animations(startup_path: str | None):
+    """Return a list of .bvh paths under ./animations, plus the index of
+    the preferred startup file (the one passed via --bvh, if any)."""
+    paths = []
+    if ANIMATIONS_DIR.is_dir():
+        paths = sorted(
+            str(p) for p in ANIMATIONS_DIR.rglob("*.bvh")
+        )
+    start = 0
+    if startup_path:
+        abs_startup = os.path.abspath(startup_path)
+        # Ensure the startup file is in the list; prepend if not.
+        if abs_startup not in (os.path.abspath(p) for p in paths):
+            paths.insert(0, startup_path)
+            start = 0
+        else:
+            for i, p in enumerate(paths):
+                if os.path.abspath(p) == abs_startup:
+                    start = i
+                    break
+    return paths, start
 
 
 class OrbitCamera:
@@ -51,14 +80,22 @@ class Viewer:
         self._t_walk = 0.0
 
         self.bvh_animation: anim_mod.Animation | None = None
-        self.bvh_path = bvh_path
         self._t_anim = 0.0
+
+        # Animation library: every .bvh under ./animations is cyclable.
+        self.anim_paths, self.anim_index = _scan_animations(bvh_path)
+        self.bvh_path = (
+            self.anim_paths[self.anim_index] if self.anim_paths else bvh_path
+        )
+
+        self.text_overlay = TextOverlay(size=22)
 
         random.seed()
         self.character = Character()
         self._regenerate_all()
-        if bvh_path:
-            self._load_bvh(bvh_path)
+        if self.bvh_path:
+            self._load_bvh(self.bvh_path)
+        self._update_label()
 
     # ---- setup ------------------------------------------------------------
 
@@ -114,6 +151,25 @@ class Viewer:
         except Exception as e:
             print(f"[bvh] failed to load {path}: {e}")
             self.bvh_animation = None
+
+    def _cycle_animation(self, step: int):
+        if not self.anim_paths:
+            return
+        self.anim_index = (self.anim_index + step) % len(self.anim_paths)
+        path = self.anim_paths[self.anim_index]
+        self.bvh_path = path
+        self._load_bvh(path)
+        self._update_label()
+
+    def _current_anim_label(self) -> str:
+        if not self.anim_paths:
+            return "anim: (none)"
+        path = self.anim_paths[self.anim_index]
+        name = Path(path).stem
+        return f"anim [{self.anim_index + 1}/{len(self.anim_paths)}]  {name}"
+
+    def _update_label(self):
+        self.text_overlay.set_text(self._current_anim_label())
 
     def _regenerate_all(self, gender: str | None = None):
         shape = skeleton.random_shape(gender=gender)
@@ -190,6 +246,11 @@ class Viewer:
             self.walk_speed = max(0.2, self.walk_speed - 0.3)
         elif key == glfw.KEY_RIGHT_BRACKET:
             self.walk_speed = min(8.0, self.walk_speed + 0.3)
+        elif key in (glfw.KEY_EQUAL, glfw.KEY_KP_ADD):
+            # '+' (same key as '=') cycles to the next animation.
+            self._cycle_animation(+1)
+        elif key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
+            self._cycle_animation(-1)
 
     # ---- per frame --------------------------------------------------------
 
@@ -208,24 +269,27 @@ class Viewer:
         )
         self.character.set_pose(pose, root_offset=root)
 
-    def _draw(self, w, h):
-        glViewport(0, 0, w, h)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        # A 55 deg vertical FOV with the default camera frames feet-to-head
-        # without clipping while keeping the face large enough to read.
-        proj = mathx.perspective(math.radians(55), w / max(h, 1), 0.1, 50.0)
-        # Camera follows the character's forward motion so it stays in frame
-        # as it walks along +Z. Only track the horizontal component; vertical
-        # bob is absorbed by the framing.
-        follow = (0.0, 0.0, float(self.character.root_offset[2]))
-        view = self.camera.view(follow=follow)
-        bone_mats = self.character.bone_matrices()
+    def _head_world_pos(self, bone_mats):
+        """World-space position of the top of the skull."""
+        try:
+            i = skeleton.bone_index(self.character.bones, "head")
+        except KeyError:
+            return np.array([0.0, 1.6, 0.0], dtype=np.float32) + self.character.root_offset
+        tip_local = np.asarray(self.character.bones[i][3], dtype=np.float32)
+        p = bone_mats[i] @ np.array([tip_local[0], tip_local[1], tip_local[2], 1.0], dtype=np.float32)
+        return p[:3]
 
+    def _draw_scene(self, proj, view, bone_mats):
         glUseProgram(self.skin_prog.prog)
         glUniformMatrix4fv(self.skin_prog.u_proj, 1, GL_TRUE, proj)
         glUniformMatrix4fv(self.skin_prog.u_view, 1, GL_TRUE, view)
         renderer.upload_bones(self.skin_prog.u_bones, bone_mats)
-        glUniform1f(self.skin_prog.u_seed, float(self.character.appearance.seed))
+        app = self.character.appearance
+        glUniform1f(self.skin_prog.u_seed, float(app.seed))
+        glUniform1i(self.skin_prog.u_print_style, int(app.print_style))
+        glUniform1f(self.skin_prog.u_print_strength, float(app.print_strength))
+        glUniform1i(self.skin_prog.u_stamp_style, int(app.stamp_style))
+        glUniform1f(self.skin_prog.u_stamp_strength, float(app.stamp_strength))
 
         for d in self.character.drawables:
             glUniform3f(self.skin_prog.u_color, *d.color)
@@ -242,6 +306,72 @@ class Viewer:
             self.character.lines.upload(pts)
             self.character.lines.draw(pts.size // 3)
             glEnable(GL_DEPTH_TEST)
+
+    def _pip_view(self, target, eye_offset):
+        target = np.asarray(target, dtype=np.float32)
+        eye = target + np.asarray(eye_offset, dtype=np.float32)
+        return mathx.look_at(eye, target, [0, 1, 0])
+
+    def _draw_pip(self, x, y, vw, vh, proj, view, bone_mats):
+        # Border frame: clear a 1px-larger region to a light color, then the
+        # interior to the scene background, leaving a thin outline.
+        glEnable(GL_SCISSOR_TEST)
+        border = 2
+        glScissor(x - border, y - border, vw + 2 * border, vh + 2 * border)
+        glClearColor(0.55, 0.6, 0.7, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT)
+        glScissor(x, y, vw, vh)
+        glClearColor(*self.BG)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glViewport(x, y, vw, vh)
+        self._draw_scene(proj, view, bone_mats)
+        glDisable(GL_SCISSOR_TEST)
+
+    def _draw(self, w, h):
+        glViewport(0, 0, w, h)
+        glClearColor(*self.BG)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # A 55 deg vertical FOV with the default camera frames feet-to-head
+        # without clipping while keeping the face large enough to read.
+        proj = mathx.perspective(math.radians(55), w / max(h, 1), 0.1, 50.0)
+        # Camera follows the character's forward motion so it stays in frame
+        # as it walks along +Z. Only track the horizontal component; vertical
+        # bob is absorbed by the framing.
+        follow = (0.0, 0.0, float(self.character.root_offset[2]))
+        view = self.camera.view(follow=follow)
+        bone_mats = self.character.bone_matrices()
+
+        self._draw_scene(proj, view, bone_mats)
+
+        # ---- picture-in-picture cameras (right edge) ----------------------
+        rx = self.character.root_offset[0]
+        rz = self.character.root_offset[2]
+        head_pos = self._head_world_pos(bone_mats)
+
+        pip_w = max(180, w // 5)
+        pip_h = max(220, h // 3)
+        margin = 16
+        right_x = w - pip_w - margin
+
+        # Face cam: tight on the head, viewed from slightly above eye level.
+        face_target = head_pos + np.array([0.0, -0.04, 0.0], dtype=np.float32)
+        face_view = self._pip_view(face_target, (0.0, 0.05, 0.55))
+        face_proj = mathx.perspective(math.radians(28), pip_w / pip_h, 0.05, 20.0)
+        face_y = h - pip_h - margin
+        self._draw_pip(right_x, face_y, pip_w, pip_h, face_proj, face_view, bone_mats)
+
+        # Body cam: full figure framed head-to-toe, slight 3/4 angle.
+        body_target = np.array([rx, 0.95, rz], dtype=np.float32)
+        body_view = self._pip_view(body_target, (1.1, 0.25, 2.6))
+        body_proj = mathx.perspective(math.radians(38), pip_w / pip_h, 0.1, 30.0)
+        body_y = face_y - pip_h - margin
+        self._draw_pip(right_x, body_y, pip_w, pip_h, body_proj, body_view, bone_mats)
+
+        # Restore main viewport for any subsequent draws (e.g. swap).
+        glViewport(0, 0, w, h)
+
+        # HUD: current animation label, top-left.
+        self.text_overlay.draw(w, h, x=18, y=18)
 
     # ---- main loop --------------------------------------------------------
 
@@ -261,5 +391,6 @@ class Viewer:
                     self._draw(w, h)
                 glfw.swap_buffers(self.win)
         finally:
+            self.text_overlay.delete()
             self.character.delete()
             glfw.terminate()
