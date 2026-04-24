@@ -206,13 +206,20 @@ def _limb_profile(name):
 
 
 _GARMENT_CAP_SCALE = {
-    # Torso bones: shallow TOP caps (so the shirt doesn't balloon over the
-    # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
-    # no visible belt-seam). Pelvis top cap is modest so the pants/shorts
-    # stop at hip level and the shirt clearly covers the midriff above.
-    "chest":  (0.14, 0.72),
+    # Torso bones: the top cap on `chest` forms the collar dome of the
+    # shirt. Previously this was very shallow (0.14) which produced an
+    # almost flat disc; when the character bent forward (bow/punch), the
+    # head's large skull ellipsoid punched through this disc and the face
+    # rendered on the shirt front. A taller dome (0.55) wraps the base of
+    # the neck and stays clear of the head under typical flexion. The
+    # bottom cap stays tall so shirt + pants overlap at the waist.
+    "chest":  (0.55, 0.72),
     "spine":  (0.18, 0.76),
     "pelvis": (0.22, 0.48),
+    # Neck is included in the top bone set so the collar follows the head.
+    # Shallow top cap so the collar rim stops below the jawline instead of
+    # swallowing the skull; deeper bottom cap blends into the chest dome.
+    "neck":   (0.15, 0.60),
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
     "foot_L": (0.90, 0.25),
     "foot_R": (0.90, 0.25),
@@ -352,9 +359,9 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         # depressed so it caps the armpit. R rotates it onto the actual
         # clavicle axis (lateral) before merging.
         Rc = mathx.align_y_to(c_tip_v)
-        ext_lat = c_len * 0.40 + radius_inflate * 0.7   # along clav (lateral)
-        ext_dn  = c_r * 1.4 + radius_inflate            # downward (axillary)
-        ext_fb  = c_r * 1.6 + radius_inflate            # front-back
+        ext_lat = c_len * 0.48 + radius_inflate * 0.7   # along clav (lateral)
+        ext_dn  = c_r * 2.1 + radius_inflate            # downward (axillary)
+        ext_fb  = c_r * 1.9 + radius_inflate            # front-back
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, c_len * 0.85, -c_r * 0.4),
             (ext_dn, ext_lat, ext_fb),
