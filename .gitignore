@@ -15,3 +15,10 @@ screenshot_*.png
 *.swp
 screenshots/baseline/
 screenshots/cycle*/
+
+# Optional animation packs fetched via tools/download_animations.py.
+# Each is hundreds of MB with attribution-required licenses; see the
+# pack's SOURCE_README.md after download.
+animations/bandai2/
+animations/100style/
+animations/cmu/
