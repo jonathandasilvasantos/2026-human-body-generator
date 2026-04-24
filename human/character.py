@@ -88,6 +88,13 @@ class Appearance:
     lip_color: Color = (0.55, 0.22, 0.20)
     pupil_color: Color = (0.04, 0.03, 0.03)
 
+    # face expression + age (ported from human-chat realism cycles).
+    # expression: "neutral" | "smile" | "frown" | "squint" | "surprised"
+    # age_group:  "young"   | "adult" | "elder"   (affects crease rendering)
+    expression: str = "neutral"
+    age_group: str = "adult"
+    crease_color: Color = (0.30, 0.18, 0.13)
+
     # top
     top_style: str   = "tshirt"       # tshirt / longsleeve / tank / dress
     top_color: Color = (0.30, 0.45, 0.75)
@@ -215,12 +222,26 @@ def random_appearance(gender: str) -> Appearance:
         stamp_style = 0
         stamp_strength = 0.0
 
+    # Expression: weighted toward neutral so crowds read calm by default.
+    expression = random.choices(
+        ["neutral", "smile", "frown", "squint", "surprised"],
+        weights=[55, 25, 6, 8, 6],
+    )[0]
+
+    # Age group: mostly adult, some young/elder for visible variety.
+    age_group = random.choices(
+        ["young", "adult", "elder"],
+        weights=[25, 55, 20],
+    )[0]
+
     return Appearance(
         gender=gender,
         skin_color=skin,
         eye_color=eye,
         lip_color=lip,
         seed=seed,
+        expression=expression,
+        age_group=age_group,
         print_style=print_style,
         print_strength=print_strength,
         stamp_style=stamp_style,
@@ -280,11 +301,19 @@ class Character:
         add(mesh_mod.build(self.bones, self.shape), app.skin_color, 0)
 
         # eyes (whites + iris + pupil), anatomical eyelid occlusion, and lips
-        add(mesh_mod.build_eyes(self.bones),    _EYE_WHITE,      3)
-        add(mesh_mod.build_iris(self.bones),    app.eye_color,   3)
-        add(mesh_mod.build_pupils(self.bones),  app.pupil_color, 3)
-        add(mesh_mod.build_eyelids(self.bones), app.skin_color,  0)
-        add(mesh_mod.build_lips(self.bones),   app.lip_color,   0)
+        add(mesh_mod.build_eyes(self.bones, self.shape),    _EYE_WHITE,      3)
+        add(mesh_mod.build_iris(self.bones, self.shape),    app.eye_color,   3)
+        add(mesh_mod.build_pupils(self.bones, self.shape),  app.pupil_color, 3)
+        add(mesh_mod.build_eyelids(self.bones, self.shape, app.expression),
+            app.skin_color, 0)
+        add(mesh_mod.build_lips(self.bones, self.shape, app.expression),
+            app.lip_color, 0)
+
+        # Age-dependent creases (forehead / nasolabial / crows'-feet). No-op
+        # for young faces. Darker than skin so they read as folds, not marks.
+        crease = tuple(min(1.0, c * 0.55) for c in app.skin_color)
+        add(mesh_mod.build_age_detail(self.bones, self.shape, app.age_group),
+            crease, 0)
 
         # hair + eyebrows
         add(accessories.build_hair(self.bones, app.hair_style), app.hair_color, 2)

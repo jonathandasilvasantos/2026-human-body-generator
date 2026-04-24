@@ -93,6 +93,13 @@ class Shape:
     neck_thick: float = 1.0
     bust_proj: float = 0.6
     q_angle: float = 0.0
+    # Face variation knobs (ported from human-chat realism work).
+    # face_asymmetry: 0..1 amplitude of left/right radial asymmetry applied
+    #                 to the skull shell. Kept small (<=0.02 in practice) so
+    #                 it does not fight sex-dimorphism cues.
+    # lip_fullness:   multiplier on lip y/z radii (1.0 = baseline).
+    face_asymmetry: float = 0.0
+    lip_fullness: float = 1.0
 
 
 # Per-bone shape rules: which shape knobs scale the head/tip offsets and
@@ -509,6 +516,19 @@ def random_shape(gender: str | None = None) -> Shape:
         bust_proj  = 0.0
         q_angle    = random.uniform(0.02, 0.08)
 
+    # Tiny per-character face asymmetry: real faces are never perfectly
+    # symmetric. Range tuned so the effect is subliminal at front view but
+    # visible in three-quarter renders.
+    face_asymmetry = random.uniform(0.004, 0.015)
+    # Lip fullness varies mildly by gender; female range skews slightly
+    # fuller, matching common soft-tissue dimorphism.
+    if gender == "female":
+        lip_fullness = random.uniform(0.95, 1.20)
+    elif gender == "male":
+        lip_fullness = random.uniform(0.80, 1.05)
+    else:
+        lip_fullness = random.uniform(0.90, 1.10)
+
     return Shape(
         gender=gender,
         height=height,
@@ -525,4 +545,6 @@ def random_shape(gender: str | None = None) -> Shape:
         neck_thick=neck_thick,
         bust_proj=bust_proj,
         q_angle=q_angle,
+        face_asymmetry=face_asymmetry,
+        lip_fullness=lip_fullness,
     )
