@@ -79,6 +79,40 @@ def build_top(bones, style, inflate=0.022, length_scale=1.0) -> SkinnedMesh:
     return mesh_mod.build_selected(bones, names, inflate, length_scale)
 
 
+# Bone sets for the sleeve underlayer: a thin fabric-colored shell that
+# sits just outside the body skin but inside the sleeve. When the sleeve
+# momentarily clips during animation (pose interpolation pushing the skin
+# past the cloth surface for a frame or two), the pixel shown is still
+# garment-colored instead of bare skin, which the eye reads as "cloth
+# stretched tight" rather than "body poking through cloth".
+_UNDERLAYER_BONES = {
+    "tshirt":     ["clav_L", "clav_R", "uarm_L", "uarm_R"],
+    "longsleeve": ["clav_L", "clav_R", "uarm_L", "uarm_R",
+                   "farm_L", "farm_R"],
+}
+
+
+def build_sleeve_underlayer(bones, style, top_inflate=0.022,
+                            length_scale=1.0) -> SkinnedMesh:
+    """Fabric-colored shell nested between skin and sleeve.
+
+    Radius sits at ~35% of the way from skin (r) to sleeve (r+top_inflate),
+    so it is hidden under the sleeve in normal poses but catches any
+    shoulder/upper-arm clip-through with the shirt's color. Only built for
+    t-shirt / long-sleeve tops (tanks and dresses don't cover the arms).
+    """
+    names = _UNDERLAYER_BONES.get(style)
+    if not names:
+        return _empty_mesh()
+    # Thin shell: enough clearance over skin to avoid z-fighting, but
+    # well inside the sleeve surface.
+    underlayer_inflate = max(0.004, top_inflate * 0.35)
+    # Shrink slightly so the underlayer doesn't poke past the sleeve cuff
+    # at wrist/elbow.
+    return mesh_mod.build_selected(bones, names, underlayer_inflate,
+                                   length_scale * 0.985)
+
+
 def build_bottom(bones, style, inflate=0.020, length_scale=1.0) -> SkinnedMesh:
     """Pants / shorts. Skirts handled by :func:`build_skirt`."""
     if style in ("none", "skirt"):

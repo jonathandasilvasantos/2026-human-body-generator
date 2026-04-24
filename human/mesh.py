@@ -320,10 +320,15 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         body_rx = u_r * body_r_shoulder * body_axes[0]
         body_ry = u_r * body_r_shoulder * body_axes[1]
         body_rz = u_r * body_r_shoulder * body_axes[2]
-        # Sleeve must clear body deltoid by full radius_inflate on every axis
-        clear = max(radius_inflate, 0.012)
+        # Sleeve must clear body deltoid by full radius_inflate on every axis.
+        # The downward (y) axis is where the armpit crease lives, so bias the
+        # clearance there: when the arm raises, LBS rotates the deltoid
+        # ellipsoid away from the chest and skin pops through the seam on the
+        # underside. Extra y-clearance keeps the sleeve wrapping past the
+        # skin's silhouette through the full range of arm elevation.
+        clear = max(radius_inflate + 0.004, 0.016)
         rx = body_rx + clear
-        ry = body_ry + clear
+        ry = body_ry + clear + 0.006
         rz = body_rz + clear
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, body_offset_y, 0.0),
