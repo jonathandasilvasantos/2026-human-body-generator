@@ -28,6 +28,10 @@ class Drawable:
     mesh_gpu: renderer.MeshGPU
     color: Color
     mode: int  # 0=skin, 1=fabric, 2=hair, 3=eye, 4=shoe
+    # Fabric sub-type used by the shader when mode == 1. 0 = cotton /
+    # generic, 1 = denim, 2 = silk/satin, 3 = knit. Ignored for non-fabric
+    # modes.
+    material: int = 0
 
 
 # --- palettes ----------------------------------------------------------------
@@ -136,6 +140,14 @@ class Appearance:
     stamp_style: int = 0          # 0=none 1=ring 2=diamond 3=cross 4=star
     stamp_strength: float = 0.0
 
+    # Fabric materials per garment piece. 0=cotton (default), 1=denim,
+    # 2=silk/satin, 3=knit. Selected at character-generation time and
+    # passed to the fabric fragment shader so each piece reads as a
+    # distinct material (weave, sheen, roughness).
+    top_material: int = 0
+    bottom_material: int = 0
+    dress_material: int = 0
+
 
 def reroll_clothes(app: "Appearance") -> "Appearance":
     """Return a copy of ``app`` with only clothing (top/bottom/shoes + prints)
@@ -173,6 +185,9 @@ def reroll_clothes(app: "Appearance") -> "Appearance":
         stamp_strength = random.uniform(0.65, 0.95)
     else:
         stamp_style, stamp_strength = 0, 0.0
+    top_material = random.choices([0, 1, 2, 3], weights=[50, 20, 10, 20])[0]
+    bottom_material = random.choices([0, 1, 2, 3], weights=[40, 35, 10, 15])[0]
+    dress_material = random.choices([0, 2, 3], weights=[35, 45, 20])[0]
     return replace(
         app,
         top_style=top_style, top_color=top_color,
@@ -188,6 +203,9 @@ def reroll_clothes(app: "Appearance") -> "Appearance":
         shoe_style=shoe_style, shoe_color=shoe_color,
         print_style=print_style, print_strength=print_strength,
         stamp_style=stamp_style, stamp_strength=stamp_strength,
+        top_material=top_material,
+        bottom_material=bottom_material,
+        dress_material=dress_material,
     )
 
 
@@ -286,6 +304,28 @@ def random_appearance(gender: str) -> Appearance:
         stamp_style = 0
         stamp_strength = 0.0
 
+    # Fabric materials per piece: cotton baseline with rotation through
+    # denim, silk and knit so crowds sample all four looks. Weighted
+    # against style/gender semantics: skirts/dresses bias toward silk or
+    # knit, pants biased toward denim/cotton.
+    def _pick_top_mat(style):
+        if style == "tank":
+            return random.choices([0, 2, 3], weights=[60, 25, 15])[0]
+        if style == "longsleeve":
+            return random.choices([0, 1, 3], weights=[55, 15, 30])[0]
+        return random.choices([0, 1, 2, 3], weights=[55, 20, 10, 15])[0]
+
+    def _pick_bottom_mat(style):
+        if style == "skirt":
+            return random.choices([0, 2, 3], weights=[35, 40, 25])[0]
+        if style == "pants":
+            return random.choices([0, 1, 3], weights=[40, 50, 10])[0]
+        return random.choices([0, 1], weights=[60, 40])[0]  # shorts
+
+    top_material = _pick_top_mat(top_style)
+    bottom_material = _pick_bottom_mat(bottom_style)
+    dress_material = random.choices([0, 2, 3], weights=[35, 45, 20])[0]
+
     # Expression: weighted toward neutral so crowds read calm by default.
     expression = random.choices(
         ["neutral", "smile", "frown", "squint", "surprised"],
@@ -329,6 +369,9 @@ def random_appearance(gender: str) -> Appearance:
         dress_flare=random.uniform(1.05, 1.30),
         shoe_style=shoe_style,
         shoe_color=shoe_color,
+        top_material=top_material,
+        bottom_material=bottom_material,
+        dress_material=dress_material,
     )
 
 
@@ -356,10 +399,10 @@ class Character:
         app = self.appearance
         out: List[Drawable] = []
 
-        def add(mesh, color, mode):
+        def add(mesh, color, mode, material=0):
             if mesh is None or mesh.indices.size == 0:
                 return
-            out.append(Drawable(renderer.MeshGPU(mesh), color, mode))
+            out.append(Drawable(renderer.MeshGPU(mesh), color, mode, material))
 
         # body skin (body + head compound + bust + glutes handled by build())
         # Feed the appearance age into the structural head pass. The value is
@@ -427,47 +470,44 @@ class Character:
             app.facial_hair_color, 2)
 
         # clothing
+        top_mat = int(getattr(app, "top_material", 0))
+        bottom_mat = int(getattr(app, "bottom_material", 0))
+        dress_mat = int(getattr(app, "dress_material", top_mat))
         if app.top_style == "dress":
             add(garments.build_dress(self.bones,
                                      length_frac=app.dress_length_frac,
                                      flare=app.dress_flare),
-                app.top_color, 1)
+                app.top_color, 1, dress_mat)
             add(garments.build_bust_overlay(self.bones, self.shape,
                                             top_inflate=0.014),
-                app.top_color, 1)
+                app.top_color, 1, dress_mat)
         else:
-            # Fabric-colored underlayer on the arms, drawn before the sleeve
-            # so momentary skin-through-sleeve clipping reveals garment
-            # color instead of bare skin. Only applicable to sleeved tops.
             add(garments.build_sleeve_underlayer(self.bones, app.top_style,
                                                  top_inflate=app.top_inflate,
                                                  length_scale=app.top_length_scale,
                                                  gender=self.shape.gender),
-                app.top_color, 1)
+                app.top_color, 1, top_mat)
             add(garments.build_top(self.bones, app.top_style,
                                    inflate=app.top_inflate,
                                    length_scale=app.top_length_scale,
                                    gender=self.shape.gender,
                                    shape=self.shape),
-                app.top_color, 1)
-            # Fabric bust overlay: nests over the bust skin so the top
-            # reads as draped fabric instead of bare skin poking through
-            # the cylindrical tank/shirt.
+                app.top_color, 1, top_mat)
             add(garments.build_bust_overlay(self.bones, self.shape,
                                             top_inflate=app.top_inflate),
-                app.top_color, 1)
+                app.top_color, 1, top_mat)
 
         if app.bottom_style == "skirt":
             add(garments.build_skirt(self.bones,
                                      length_frac=app.skirt_length_frac,
                                      flare=app.skirt_flare),
-                app.bottom_color, 1)
+                app.bottom_color, 1, bottom_mat)
         elif app.bottom_style in ("pants", "shorts"):
             add(garments.build_bottom(self.bones, app.bottom_style,
                                       inflate=app.bottom_inflate,
                                       length_scale=app.bottom_length_scale,
                                       gender=self.shape.gender),
-                app.bottom_color, 1)
+                app.bottom_color, 1, bottom_mat)
 
         add(garments.build_shoes(self.bones, app.shoe_style), app.shoe_color, 4)
 
@@ -509,7 +549,8 @@ class Character:
     # ---- render helpers ---------------------------------------------------
 
     def bone_matrices(self) -> np.ndarray:
-        return skeleton.compute_bone_matrices(self.bones, self.pose, self.root_offset)
+        pose = skeleton.derive_cloth_pose(self.bones, self.pose)
+        return skeleton.compute_bone_matrices(self.bones, pose, self.root_offset)
 
     def skeleton_line_points(self, bone_mats: np.ndarray) -> np.ndarray:
         pts = np.empty((len(self.bones) * 2, 3), dtype=np.float32)

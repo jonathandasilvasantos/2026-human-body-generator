@@ -150,6 +150,9 @@ def capture(
     for d in character.drawables:
         glUniform3f(skin_prog.u_color, *d.color)
         glUniform1i(skin_prog.u_mode, d.mode)
+        glUniform1i(skin_prog.u_material, int(getattr(d, "material", 0)))
+        glUniform1f(skin_prog.u_bend_inflate,
+                    0.025 if d.mode == 1 else 0.0)
         d.mesh_gpu.draw()
 
     # Blit multisample -> resolve, read back

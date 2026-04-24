@@ -17,17 +17,44 @@ layout(location=3) in vec2  a_weights;
 uniform mat4 u_proj;
 uniform mat4 u_view;
 uniform mat4 u_bones[""" + str(MAX_BONES) + """];
+// Outward inflate along the vertex normal, scaled by the per-vertex
+// bend scalar. Used to push fabric off the body at elbow/knee folds so
+// a tight sleeve or pant leg doesn't let skin poke through when the
+// joint flexes. Set to 0 for skin and non-garment meshes.
+uniform float u_bend_inflate;
 
 out vec3 v_nrm;
 out vec3 v_pos;
 out vec3 v_local;
+// Pose-space bend scalar: positive where the two skinning bones' rotations
+// diverge (elbow/knee/waist flexion seam on a dual-skinned garment). Zero
+// at rest pose and for single-bone-skinned vertices. Fed into the fabric
+// fragment shader as a wrinkle-intensity mask so cloth crumples at joints.
+out float v_bend;
 
 void main() {
-    mat4 M = u_bones[a_bones.x] * a_weights.x + u_bones[a_bones.y] * a_weights.y;
-    vec4 p = M * vec4(a_pos, 1.0);
-    gl_Position = u_proj * u_view * p;
-    v_pos = p.xyz;
-    v_nrm = mat3(M) * a_nrm;
+    mat4 Ma = u_bones[a_bones.x];
+    mat4 Mb = u_bones[a_bones.y];
+    mat4 M = Ma * a_weights.x + Mb * a_weights.y;
+
+    vec3 da = mat3(Ma) * a_pos;
+    vec3 db = mat3(Mb) * a_pos;
+    float blend = a_weights.x * a_weights.y;
+    float bend_raw = clamp(length(da - db) * blend * 4.0, 0.0, 1.2);
+    v_bend = bend_raw;
+
+    // Push the vertex outward along its (skinned) world normal by a
+    // small amount proportional to bend. A tight sleeve / pant leg
+    // puffs off the skin at the elbow / knee so the body mesh doesn't
+    // clip through. Amount is modest because heavy inflation looks
+    // balloon-like; the improvement to clip-through is worth the
+    // silhouette softening.
+    vec3 world_nrm = normalize(mat3(M) * a_nrm);
+    vec3 p_world = (M * vec4(a_pos, 1.0)).xyz
+                    + world_nrm * u_bend_inflate * bend_raw;
+    gl_Position = u_proj * u_view * vec4(p_world, 1.0);
+    v_pos = p_world;
+    v_nrm = world_nrm;
     v_local = a_pos;
 }
 """
@@ -37,6 +64,7 @@ SKIN_FRAG = """
 in vec3 v_nrm;
 in vec3 v_pos;
 in vec3 v_local;
+in float v_bend;
 out vec4 frag;
 
 uniform vec3  u_color;
@@ -49,6 +77,7 @@ uniform int   u_print_style;    // 0=none 1=stripes 2=dots 3=plaid 4=noise
 uniform float u_print_strength; // 0..1
 uniform int   u_stamp_style;    // 0=none 1=ring 2=diamond-ring 3=cross 4=star
 uniform float u_stamp_strength; // 0..1
+uniform int   u_material;       // fabric type when u_mode==1: 0 cotton, 1 denim, 2 silk, 3 knit
 
 // cheap 3D hash -> [0,1]
 float hash3(vec3 p) {
@@ -192,17 +221,77 @@ void main() {
         // FABRIC: interlaced yarns, dye variation, and broad compression
         // folds. This approximates pattern/texture-flow approaches used by
         // procedural garment systems without requiring authored UVs.
-        float dye = fbm(sample_p * 3.0);
-        albedo *= 0.91 + 0.13 * dye;
+        // u_material picks a sub-type (cotton/denim/silk/knit) that
+        // retunes weave frequency, warp/weft balance, dye variance and
+        // specular response. Authored by eye to sit somewhere close to
+        // the plainclothes looks of each fabric family.
+        float dye_scale = 3.0;
+        float dye_amp = 0.13;
+        float weave_fx = 86.0;
+        float weave_fy = 92.0;
+        float warp_share = 0.55;
+        float weave_amp = 0.12;
+        if (u_material == 1) {              // denim: coarse weave, strong warp
+            dye_scale = 1.8; dye_amp = 0.18;
+            weave_fx = 130.0; weave_fy = 58.0;
+            warp_share = 0.72; weave_amp = 0.19;
+        } else if (u_material == 2) {       // silk: very fine, low contrast
+            dye_scale = 4.2; dye_amp = 0.06;
+            weave_fx = 210.0; weave_fy = 230.0;
+            warp_share = 0.50; weave_amp = 0.05;
+        } else if (u_material == 3) {       // knit: vertical ribbed wales
+            dye_scale = 2.4; dye_amp = 0.11;
+            weave_fx = 48.0;  weave_fy = 160.0;
+            warp_share = 0.30; weave_amp = 0.22;
+        }
 
-        float warp = 0.5 + 0.5 * cos(v_pos.x * 86.0 + fbm(sample_p * 7.0) * 2.5);
-        float weft = 0.5 + 0.5 * cos(v_pos.y * 92.0 + fbm(sample_p * 6.0 + vec3(3.0)) * 2.0);
-        float weave = warp * 0.55 + weft * 0.45;
-        albedo *= 0.91 + 0.12 * weave;
+        float dye = fbm(sample_p * dye_scale);
+        albedo *= 1.0 - 0.5 * dye_amp + dye_amp * dye;
+
+        float warp = 0.5 + 0.5 * cos(v_pos.x * weave_fx + fbm(sample_p * 7.0) * 2.5);
+        float weft = 0.5 + 0.5 * cos(v_pos.y * weave_fy + fbm(sample_p * 6.0 + vec3(3.0)) * 2.0);
+        float weave = warp * warp_share + weft * (1.0 - warp_share);
+        albedo *= 1.0 - weave_amp * 0.5 + weave_amp * weave;
+
+        // Denim sits cooler and indigo-biased; silk gets a slight sheen
+        // tint; knit tones down a hair. All relative to the base u_color
+        // so any sampled garment color still reads recognisably.
+        if (u_material == 1) {
+            albedo = mix(albedo, albedo * vec3(0.82, 0.88, 1.05), 0.35);
+        } else if (u_material == 2) {
+            albedo = mix(albedo, albedo * vec3(1.05, 1.03, 1.01), 0.15);
+        } else if (u_material == 3) {
+            albedo *= 0.94;
+        }
 
         float folds = 0.5 + 0.5 * cos(v_pos.y * 18.0 + fbm(sample_p * 2.0) * 4.0);
         float fold_mask = smoothstep(0.55, 1.0, folds) * (0.65 + 0.35 * abs(n.z));
         albedo *= 1.0 - 0.06 * fold_mask;
+
+        // Pose-driven compression wrinkles: at elbows / knees / waist the
+        // vertex shader reports a non-zero v_bend, peaking along the 50/50
+        // two-bone blend band. Add a high-frequency ripple pattern that
+        // darkens with bend intensity and also lifts/dips the perceived
+        // normal so the lighting picks up the fold. Direction uses
+        // v_local.y so wrinkles run across the limb, not along it.
+        if (v_bend > 0.02) {
+            float bendc = clamp(v_bend, 0.0, 1.0);
+            float ripple = 0.5 + 0.5 * sin(v_local.y * 140.0
+                                            + fbm(sample_p * 3.0) * 4.0);
+            float ripple_mask = smoothstep(0.35, 0.95, ripple);
+            // Dark "valley" lines between ridges.
+            albedo *= 1.0 - 0.18 * bendc * ripple_mask;
+            // A second, lower-frequency fold that reads as a single deep
+            // crease at the joint apex (strong bends only).
+            float crease = smoothstep(0.55, 1.0,
+                0.5 + 0.5 * cos(v_local.y * 32.0
+                                 + fbm(sample_p * 1.8) * 3.0));
+            albedo *= 1.0 - 0.12 * bendc * bendc * crease;
+            // Tint toward a slightly desaturated shadow so the fold reads
+            // as depth rather than dirt.
+            albedo = mix(albedo, albedo * vec3(0.88, 0.90, 0.94),
+                         0.18 * bendc * ripple_mask);
+        }
 
         float lint = fbm(sample_p * 24.0);
         albedo *= 0.96 + 0.07 * lint;
@@ -369,6 +458,27 @@ void main() {
             float scatter = pow(max(dot(-L1, n_base), 0.0), 2.0) * skin_front;
             c += scatter * 0.035 * albedo * vec3(1.18, 0.56, 0.44);
         }
+    } else if (u_mode == 1 && u_material == 2) {
+        // SILK / SATIN: smooth surface with a cross-grain anisotropic
+        // highlight. We approximate the fiber direction as horizontal in
+        // the garment's local frame (weft) and run a Kajiya-style sheen
+        // off it. Softer than hair -- the highlight is a broad band, not
+        // a narrow strand specular.
+        vec3 V = normalize(-v_pos);
+        vec3 T = normalize(vec3(1.0, 0.0, 0.0)
+                           - n * dot(vec3(1.0, 0.0, 0.0), n));
+        vec3 H = normalize(L1 + V);
+        float sinTH = sqrt(max(0.0, 1.0 - dot(T, H) * dot(T, H)));
+        float sheen = pow(sinTH, 18.0);
+        c += 0.14 * sheen * albedo * vec3(1.05, 1.02, 0.98);
+    } else if (u_mode == 1 && u_material == 1) {
+        // DENIM: coarse weave catches a low broad specular at grazing
+        // angles. Blinn-Phong with a low exponent and very small amp so
+        // it reads as dry cotton twill, not plastic.
+        vec3 V = normalize(-v_pos);
+        vec3 H = normalize(L1 + V);
+        float spec = pow(max(dot(n, H), 0.0), 14.0);
+        c += 0.035 * spec * vec3(0.92, 0.95, 1.0);
     } else if (u_mode == 2) {
         // Kajiya-Kay style strand highlight. Approximate strand flow in the
         // surface tangent plane: mostly downward with a small procedural sway.
@@ -453,6 +563,8 @@ class SkinProgram:
         self.u_print_strength = glGetUniformLocation(self.prog, "u_print_strength")
         self.u_stamp_style    = glGetUniformLocation(self.prog, "u_stamp_style")
         self.u_stamp_strength = glGetUniformLocation(self.prog, "u_stamp_strength")
+        self.u_material       = glGetUniformLocation(self.prog, "u_material")
+        self.u_bend_inflate   = glGetUniformLocation(self.prog, "u_bend_inflate")
 
 
 class LineProgram:

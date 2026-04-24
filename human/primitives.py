@@ -252,6 +252,100 @@ def cone_shell(
     )
 
 
+def cone_shell_leg_blend(
+    top_center,
+    top_radius,
+    height,
+    bottom_radius,
+    pelvis_index,
+    left_skirt_index,
+    right_skirt_index,
+    rings=8,
+    radial=26,
+    max_leg_weight=0.55,
+    start_depth=0.15,
+    lobe_sharpness=1.6,
+):
+    """Cone shell dual-skinned to the pelvis and to one of two virtual
+    ``skirt_L`` / ``skirt_R`` bones (see :func:`skeleton.derive_cloth_pose`).
+
+    The virtual skirt bones share the pelvis origin so a dual-skinned
+    vertex stays at its rest-pose position regardless of weight; blending
+    only affects rotation. That gives the skirt / dress a pose-driven
+    drape: as the thigh swings forward, the front panel of cloth over
+    that leg rotates partially with it instead of the leg poking straight
+    through the rigidly-skinned cone.
+
+    ``max_leg_weight`` is the peak thigh-follow weight at the hem, on the
+    side directly over the active leg. ``start_depth`` delays the ramp so
+    the waistband still reads as rigidly attached to the pelvis.
+    ``lobe_sharpness`` controls how tightly the follow mass concentrates
+    to the front panel above each leg (higher = narrower lobe).
+    """
+    cx, cy, cz = top_center
+    v, n, ba, bb, w = [], [], [], [], []
+
+    slope = (bottom_radius - top_radius) / max(height, 1e-4)
+
+    for i in range(rings + 1):
+        t = i / rings
+        y = cy - t * height
+        rr = top_radius + t * (bottom_radius - top_radius)
+        depth_ramp = max(0.0, (t - start_depth) / max(1e-4, 1.0 - start_depth))
+        depth_ramp = depth_ramp * depth_ramp * (3.0 - 2.0 * depth_ramp)  # smoothstep
+        for j in range(radial):
+            phi = 2.0 * math.pi * (j / radial)
+            sp, cp = math.sin(phi), math.cos(phi)
+            vx = cx + rr * cp
+            vy = y
+            vz = cz + rr * sp
+            v.append((vx, vy, vz))
+            nx = cp
+            ny = slope
+            nz = sp
+            inv = 1.0 / math.sqrt(nx * nx + ny * ny + nz * nz)
+            n.append((nx * inv, ny * inv, nz * inv))
+
+            # Pick the skirt bone on the same side as the vertex. Sideness
+            # is decided by sign of vx (thigh_L is at +X in rest pose).
+            side_left = vx >= 0.0
+            skirt_idx = left_skirt_index if side_left else right_skirt_index
+
+            # Radial mask: cloth over the sagittal plane of the chosen
+            # thigh (front AND back) follows the thigh rotation, while the
+            # medial (inner) and lateral (outer) panels get less follow so
+            # the two halves meet smoothly at the midline and the hip side
+            # is free to swing around the body. Peaks at phi = +-pi/2
+            # (|sp| = 1), zero at phi = 0/pi (|cp| = 1).
+            sagittal = sp * sp
+            radial_mask = pow(sagittal, lobe_sharpness * 0.5)
+
+            leg_w = max_leg_weight * depth_ramp * radial_mask
+            leg_w = max(0.0, min(leg_w, 0.80))
+
+            ba.append(pelvis_index)
+            bb.append(skirt_idx if leg_w > 1e-4 else pelvis_index)
+            w.append((1.0 - leg_w, leg_w))
+
+    idx = []
+    for i in range(rings):
+        for j in range(radial):
+            a = i * radial + j
+            b = i * radial + (j + 1) % radial
+            c = (i + 1) * radial + j
+            d = (i + 1) * radial + (j + 1) % radial
+            idx.extend([a, b, c, b, d, c])
+
+    return (
+        np.asarray(v, np.float32),
+        np.asarray(n, np.float32),
+        np.asarray(ba, np.int32),
+        np.asarray(bb, np.int32),
+        np.asarray(w, np.float32),
+        np.asarray(idx, np.uint32),
+    )
+
+
 def merge(chunks):
     """Concatenate a list of ``(v,n,ba,bb,w,idx)`` tuples, fixing up indices."""
     if not chunks:

@@ -56,6 +56,13 @@ BONES_BASE: List[Bone] = [
     ("thigh_R",   0, (-0.085, -0.02, 0.0),(0.0, -0.44, 0.0), 0.088),
     ("shin_R",   16, (0.0, -0.44, 0.0),  (0.0, -0.42, 0.0),  0.064),
     ("foot_R",   17, (0.0, -0.42, 0.0),  (0.0, -0.05, 0.18), 0.047),
+
+    # Virtual "cloth" bones: share the pelvis origin (head = zero offset) so
+    # they only contribute rotation when skinned. Driven each frame from a
+    # scaled copy of the corresponding thigh rotation so skirts / dress hems
+    # partially follow the leg. Not used for mesh capsules (r = 0).
+    ("skirt_L",   0, (0.0, 0.0, 0.0),    (0.0, -0.05, 0.0),  0.0),
+    ("skirt_R",   0, (0.0, 0.0, 0.0),    (0.0, -0.05, 0.0),  0.0),
 ]
 
 
@@ -147,6 +154,10 @@ _SHAPE_RULES = {
     "shin_R":  dict(head=("1", "leg_len", "1"),tip=("1", "leg_len", "1"), r="bulk*lower_bulk"),
     "foot_L":  dict(head=("1", "leg_len", "1"),tip=("1", "1", "1"),       r="bulk"),
     "foot_R":  dict(head=("1", "leg_len", "1"),tip=("1", "1", "1"),       r="bulk"),
+
+    # Virtual cloth bones -- share pelvis origin, no radius, no mesh.
+    "skirt_L": dict(head=("1", "1", "1"), tip=("1", "1", "1"), r="1"),
+    "skirt_R": dict(head=("1", "1", "1"), tip=("1", "1", "1"), r="1"),
 }
 
 
@@ -197,6 +208,40 @@ def apply_shape(bones_base: List[Bone], shape: Shape) -> List[Bone]:
             tuple(new_tip),
             r * r_s,
         ))
+    return out
+
+
+# Fraction of the thigh rotation the skirt bone inherits. Tuned empirically:
+# high enough to give the hem noticeable leg-follow sway, low enough that the
+# skirt keeps a pelvis-anchored feel instead of clinging to the leg. Lateral
+# swing (Z axis) gets a smaller share because out-of-sagittal hip motion
+# would otherwise read as the skirt hugging the leg medially.
+_SKIRT_FOLLOW_X = 0.42
+_SKIRT_FOLLOW_Y = 0.20
+_SKIRT_FOLLOW_Z = 0.18
+
+
+def derive_cloth_pose(bones: List[Bone], pose_rot):
+    """Return a copy of ``pose_rot`` with virtual cloth bones (skirt_L/R)
+    filled from a scaled copy of the corresponding thigh rotation.
+
+    Safe to call even when the bones list / pose has no cloth bones: returns
+    the input unchanged. Accepts tuples or ndarray rows and always emits
+    plain tuples so ``rotate_xyz`` works downstream.
+    """
+    names = [b[0] for b in bones]
+    out = [tuple(float(v) for v in r) for r in pose_rot]
+    for skirt_name, thigh_name in (("skirt_L", "thigh_L"), ("skirt_R", "thigh_R")):
+        if skirt_name not in names or thigh_name not in names:
+            continue
+        s_i = names.index(skirt_name)
+        t_i = names.index(thigh_name)
+        tx, ty, tz = out[t_i]
+        out[s_i] = (
+            tx * _SKIRT_FOLLOW_X,
+            ty * _SKIRT_FOLLOW_Y,
+            tz * _SKIRT_FOLLOW_Z,
+        )
     return out
 
 
