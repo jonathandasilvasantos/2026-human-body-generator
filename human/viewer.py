@@ -362,6 +362,7 @@ class Viewer:
         for d in self.character.drawables:
             glUniform3f(self.skin_prog.u_color, *d.color)
             glUniform1i(self.skin_prog.u_mode, d.mode)
+            glUniform1i(self.skin_prog.u_material, int(getattr(d, "material", 0)))
             d.mesh_gpu.draw()
 
         if self.show_bones:
