@@ -300,25 +300,25 @@ void main() {
     vec3 L2 = normalize(vec3(-0.5, 0.3, -0.4));
     vec3 C1 = vec3(1.0, 0.96, 0.90);
     vec3 C2 = vec3(0.70, 0.78, 1.0);
-    float ambient = 0.20;
+    float ambient = 0.46;
     if (u_light_style == 1) {
         L1 = normalize(vec3(0.0, 0.65, 0.76));
         L2 = normalize(vec3(-0.25, 0.55, 0.30));
         C1 = vec3(0.98, 0.98, 1.0);
         C2 = vec3(0.75, 0.82, 0.95);
-        ambient = 0.30;
+        ambient = 0.54;
     } else if (u_light_style == 2) {
         L1 = normalize(vec3(0.95, 0.28, 0.16));
         L2 = normalize(vec3(-0.25, 0.45, -0.55));
         C1 = vec3(1.0, 0.92, 0.84);
         C2 = vec3(0.55, 0.62, 0.82);
-        ambient = 0.12;
+        ambient = 0.34;
     } else if (u_light_style == 3) {
         L1 = normalize(vec3(-0.40, 0.70, 0.55));
         L2 = normalize(vec3(0.55, 0.35, -0.48));
         C1 = vec3(1.0, 0.78, 0.58);
         C2 = vec3(0.48, 0.62, 1.0);
-        ambient = 0.18;
+        ambient = 0.42;
     }
 
     float ndl1 = max(dot(n, L1), 0.0);
@@ -328,6 +328,12 @@ void main() {
         ndl2 = clamp((dot(n, L2) + 0.22) / 1.22, 0.0, 1.0);
     }
     vec3 light = C1 * ndl1 * 0.88 + C2 * ndl2 * 0.32 + vec3(ambient);
+    if (u_mode == 0) {
+        // Face readability: keep a soft skin-only fill so darker skin tones
+        // and eye/nose/mouth cavities do not collapse under portrait light.
+        float skin_luma = dot(u_color, vec3(0.299, 0.587, 0.114));
+        light += vec3(0.10 + 0.28 * (1.0 - skin_luma));
+    }
     vec3 c = albedo * light;
 
     // Blinn-Phong specular: skin has a soft oil highlight; eyes use a tighter
