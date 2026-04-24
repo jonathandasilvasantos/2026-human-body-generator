@@ -44,6 +44,37 @@ def _hairline_cards(head_idx, parent, length, head_w, head_d, style):
     return []
 
 
+def _shape_drape(chunk, drape_cy, drape_ry, drape_rx, length, head_d):
+    """Apply gravity-style shaping to the long-hair drape.
+
+    Pinch the top of the drape toward the skull (so it emerges from the
+    scalp rather than flaring outward at the crown), flare the midsection
+    slightly to read as mass falling over the shoulders, and push the
+    bottom back and down so the tips curve away from the neck like hair
+    settled under its own weight.
+    """
+    v, n, ba, bb, w, idx = chunk
+    v = v.copy()
+    y_max = float(v[:, 1].max())
+    y_min = float(v[:, 1].min())
+    y_span = max(y_max - y_min, 1e-6)
+    for k in range(v.shape[0]):
+        y = v[k, 1]
+        t = (y_max - y) / y_span  # 0 at top, 1 at bottom tip
+        # Pinch the crown — narrower where hair meets the scalp.
+        pinch = max(0.0, 1.0 - t * 4.0)  # only affects top 25%
+        # Flare mid-shoulder: peaks around t=0.55.
+        flare = max(0.0, 1.0 - abs(t - 0.55) * 2.6)
+        scale_x = 1.0 - 0.35 * pinch + 0.10 * flare
+        scale_z = 1.0 - 0.25 * pinch
+        v[k, 0] *= scale_x
+        v[k, 2] = (v[k, 2]) * scale_z
+        # Gravity push: lower tips fall back and slightly down.
+        v[k, 2] -= head_d * 0.18 * (t * t)
+        v[k, 1] -= length * 0.05 * (t * t * t)
+    return (v, n, ba, bb, w, idx)
+
+
 def _shape_scalp_cap(chunk, scalp_cy, scalp_rx, scalp_ry, scalp_rz, length,
                      head_w, head_d, style):
     """Displace scalp-cap vertices to add sideburns, temple taper and a
@@ -179,16 +210,20 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             head_idx, parent,
             rings=12, radial=32, y_cutoff=max(-1.6, y_cut_top),
         )
+        drape_rx = scalp_rx * 1.08
+        drape_rz = scalp_rz * 0.72
+        drape = prim.hemisphere_cap(
+            (0.0, drape_cy, -head_d * 1.55),
+            (drape_rx, drape_ry, drape_rz),
+            head_idx, parent,
+            rings=12, radial=32, y_cutoff=-0.6,
+        )
+        drape = _shape_drape(drape, drape_cy, drape_ry, drape_rx,
+                             length, head_d)
         chunks = [
             _shape_scalp_cap(cap_top, scalp_cy, rx_top, ry_top, rz_top,
                              length, head_w, head_d, "long"),
-            # Lower drape behind and around the head.
-            prim.hemisphere_cap(
-                (0.0, drape_cy, -head_d * 1.55),
-                (scalp_rx * 1.08, drape_ry, scalp_rz * 0.72),
-                head_idx, parent,
-                rings=10, radial=28, y_cutoff=-0.6,
-            ),
+            drape,
         ]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     else:
