@@ -105,12 +105,22 @@ void main() {
         float cavity = clamp(-n.y * 0.5 + 0.5, 0.0, 1.0);
         albedo = mix(albedo, albedo * vec3(1.05, 0.90, 0.88), 0.12 * cavity);
     } else if (u_mode == 1) {
-        // FABRIC: dye variation from fBm + subtle cosine weave.
+        // FABRIC: interlaced yarns, dye variation, and broad compression
+        // folds. This approximates pattern/texture-flow approaches used by
+        // procedural garment systems without requiring authored UVs.
         float dye = fbm(sample_p * 3.0);
-        albedo *= 0.92 + 0.12 * dye;
-        float weave = 0.5 + 0.5 * cos(v_pos.x * 45.0) * cos(v_pos.y * 45.0);
-        albedo *= 0.94 + 0.08 * weave;
-        float lint = fbm(sample_p * 22.0);
+        albedo *= 0.91 + 0.13 * dye;
+
+        float warp = 0.5 + 0.5 * cos(v_pos.x * 86.0 + fbm(sample_p * 7.0) * 2.5);
+        float weft = 0.5 + 0.5 * cos(v_pos.y * 92.0 + fbm(sample_p * 6.0 + vec3(3.0)) * 2.0);
+        float weave = warp * 0.55 + weft * 0.45;
+        albedo *= 0.91 + 0.12 * weave;
+
+        float folds = 0.5 + 0.5 * cos(v_pos.y * 18.0 + fbm(sample_p * 2.0) * 4.0);
+        float fold_mask = smoothstep(0.55, 1.0, folds) * (0.65 + 0.35 * abs(n.z));
+        albedo *= 1.0 - 0.06 * fold_mask;
+
+        float lint = fbm(sample_p * 24.0);
         albedo *= 0.96 + 0.07 * lint;
     } else if (u_mode == 2) {
         // HAIR: strongly anisotropic fBm -- long wavelength along the head's
