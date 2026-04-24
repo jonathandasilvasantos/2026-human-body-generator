@@ -24,6 +24,18 @@ pipeline.
 | ![](screenshots/03_female_dress_medium_hair.png) | ![](screenshots/04_male_bald_fullbeard.png) |
 | ![](screenshots/05_male_buzz_shorts.png)        | ![](screenshots/06_male_tank.png) |
 
+### Faces & eyes
+
+Anatomical face stack with expressions, age groups, sub-millimeter face
+asymmetry, and a multi-layer eye (sclera + limbal ring + iris + collarette
++ pupil + lacrimal caruncle + corneal catchlight) that converges on the
+camera instead of staring parallel.
+
+|  |  |
+|---|---|
+| ![](screenshots/09_face_closeup_female.png)  | ![](screenshots/10_face_closeup_male.png) |
+| ![](screenshots/11_face_closeup_female2.png) | ![](screenshots/12_face_closeup_male2.png) |
+
 ### Walk cycle — BVH retargeting
 
 Four frames sampled evenly across `animations/walk2.bvh` (a Mixamo walk),
@@ -47,9 +59,49 @@ retargeted onto two different procedurally-generated characters:
 ### Anthropometric head
 - Compound head built from the classical rule-of-thirds landmarks (chin,
   mouth, nose base, eye line, brow, hairline)
-- Eyes (whites + iris + pupil), lips, nose ridge, cheekbones, ears, chin;
-  jaw emphasis for male
+- Lips, nose ridge, cheekbones, ears, chin; jaw emphasis for male
 - MANO-inspired compound hands with anatomical thumb placement
+
+### Faces — expressions, age, asymmetry
+- **Expressions** (`Appearance.expression`): `neutral` / `smile` / `frown`
+  / `squint` / `surprised`. Drives both eyelid aperture and lip-corner
+  position, plus a vertical mouth-open slide for `surprised`.
+- **Age groups** (`Appearance.age_group`): `young` / `adult` / `elder`.
+  Adult and elder faces pick up forehead lines, crow's-feet and
+  nasolabial folds drawn as thin darker patches over the skull surface;
+  young faces stay smooth.
+- **Face asymmetry** (`Shape.face_asymmetry`): a small per-character
+  left/right radial bias on the skull shell, peaking around the
+  cheekbone band. Subliminal at front view, visible at three-quarter.
+- **Lip fullness** (`Shape.lip_fullness`): gender-biased multiplier on
+  the upper/lower lip radii.
+- See `notes/face_system.md`.
+
+### Eyes — anatomical multi-layer stack
+- **Spherical eyeball** (true sphere, not an ovoid that reads flat once
+  the lids cover the poles).
+- **Limbal ring**: dark corneoscleral edge drawn behind the iris — the
+  single biggest cue that the iris is a 3D structure rather than a
+  printed disc.
+- **Iris** with a small forward dome to suggest a corneal bulge.
+- **Collarette**: faint inner ring inside the iris (pupillary/ciliary
+  zone boundary) so the colored disc isn't a single flat swatch.
+- **Pupil** sized at 30 % of the iris (anatomical norm under indoor
+  light), perfectly concentric.
+- **Lacrimal caruncle**: small flesh-pink bump at the medial canthus,
+  tinted off the character's skin tone.
+- **Corneal catchlight**: a small bright speck on the upper-outer iris
+  of each eye, faking a single off-axis light source — stops the eyes
+  reading as dead glass.
+- **Gaze convergence**: each iris/pupil is toed inward by a similar-
+  triangles convergence shift derived from a 50 cm focal target, so both
+  optical axes meet on the camera instead of staring parallel into
+  infinity. Eliminates the wall-eye reading and prevents skull
+  asymmetry from tipping the brain toward registering exotropia.
+- **Sclera tonal jitter** per character so a crowd doesn't share one
+  identical pure-white eye.
+- All offsets factored through a single `_eye_metrics()` so every layer
+  stays concentric and identically converged. See `notes/eye_realism.md`.
 
 ### Hair + facial hair
 - Styles: bald / buzz / short / medium / long (drape past the shoulders)
