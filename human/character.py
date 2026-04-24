@@ -3,7 +3,7 @@ drawables that make up the renderable body (skin, eyes, hair, clothes...).
 
 A single ``Character`` owns a list of :class:`Drawable` entries. Each is a
 GPU mesh paired with a solid base color and a shader mode (0=skin, 1=fabric,
-2=hair, 3=eye). The viewer just iterates the list.
+2=hair, 3=eye, 4=shoe). The viewer just iterates the list.
 """
 
 import random
@@ -26,7 +26,7 @@ Color = Tuple[float, float, float]
 class Drawable:
     mesh_gpu: renderer.MeshGPU
     color: Color
-    mode: int  # 0=skin, 1=fabric, 2=hair, 3=eye
+    mode: int  # 0=skin, 1=fabric, 2=hair, 3=eye, 4=shoe
 
 
 # --- palettes ----------------------------------------------------------------
@@ -284,7 +284,7 @@ class Character:
                                       length_scale=app.bottom_length_scale),
                 app.bottom_color, 1)
 
-        add(garments.build_shoes(self.bones, app.shoe_style), app.shoe_color, 1)
+        add(garments.build_shoes(self.bones, app.shoe_style), app.shoe_color, 4)
 
         self.drawables = out
         self._lines = renderer.LineBufferGPU(max_points=len(self.bones) * 2)
