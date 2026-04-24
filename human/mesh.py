@@ -106,6 +106,105 @@ def _capsule(bone_index, parent_index, length, radius, radial=16, rings=6,
     )
 
 
+def _profiled_capsule(bone_index, parent_index, length, radius, profile,
+                      radial=16, rings=6, top_cap_scale=1.0,
+                      bottom_cap_scale=1.0):
+    """Capsule with an anatomical radius profile along the bone.
+
+    ``profile(t)`` returns a radius multiplier for ``t`` in [0, 1], where
+    t=0 is the proximal joint and t=1 is the distal joint. This keeps the
+    cheap capsule topology but avoids perfectly cylindrical limbs.
+    """
+    verts, norms, b_a, b_b, w = [], [], [], [], []
+
+    def add(p, n, wa):
+        verts.append(p)
+        norms.append(n / (np.linalg.norm(n) + 1e-8))
+        b_a.append(bone_index)
+        b_b.append(parent_index if parent_index >= 0 else bone_index)
+        w.append((wa, 1.0 - wa))
+
+    blend_zone = 0.35 * max(length, 1e-3)
+    has_parent = parent_index >= 0
+    r0 = radius * profile(0.0)
+    r1 = radius * profile(1.0)
+
+    # bottom hemisphere
+    for i in range(rings + 1):
+        phi = (math.pi * 0.5) * (i / rings)
+        y = -math.sin(phi) * r0 * bottom_cap_scale
+        rr = math.cos(phi) * r0
+        wa = 0.0 if has_parent else 1.0
+        for j in range(radial):
+            th = (j / radial) * 2 * math.pi
+            x, z = math.cos(th) * rr, math.sin(th) * rr
+            add(np.array([x, y, z], np.float32), np.array([x, y, z], np.float32), wa)
+
+    # profiled cylinder
+    cyl_rings = max(3, rings + 2)
+    for i in range(cyl_rings + 1):
+        t = i / cyl_rings
+        y = t * length
+        rr = radius * profile(t)
+        if not has_parent:
+            wa = 1.0
+        else:
+            bt = min(1.0, y / max(blend_zone, 1e-4))
+            wa = bt * bt * (3 - 2 * bt)
+        # Finite-difference slope for normals on tapered sections.
+        t0 = max(0.0, t - 1.0 / cyl_rings)
+        t1_ = min(1.0, t + 1.0 / cyl_rings)
+        drdy = (radius * profile(t1_) - radius * profile(t0)) / max((t1_ - t0) * length, 1e-5)
+        for j in range(radial):
+            th = (j / radial) * 2 * math.pi
+            cp, sp = math.cos(th), math.sin(th)
+            x, z = cp * rr, sp * rr
+            add(np.array([x, y, z], np.float32),
+                np.array([cp, -drdy, sp], np.float32), wa)
+
+    # top hemisphere
+    for i in range(rings + 1):
+        phi = (math.pi * 0.5) * (i / rings)
+        y = length + math.sin(phi) * r1 * top_cap_scale
+        rr = math.cos(phi) * r1
+        for j in range(radial):
+            th = (j / radial) * 2 * math.pi
+            x, z = math.cos(th) * rr, math.sin(th) * rr
+            add(np.array([x, y, z], np.float32), np.array([x, y - length, z], np.float32), 1.0)
+
+    total_rings = (rings + 1) + (cyl_rings + 1) + (rings + 1)
+    indices = []
+    for r in range(total_rings - 1):
+        for j in range(radial):
+            a = r * radial + j
+            b = r * radial + (j + 1) % radial
+            c = (r + 1) * radial + j
+            d = (r + 1) * radial + (j + 1) % radial
+            indices.extend([a, c, b, b, c, d])
+
+    return (
+        np.asarray(verts, np.float32),
+        np.asarray(norms, np.float32),
+        np.asarray(b_a, np.int32),
+        np.asarray(b_b, np.int32),
+        np.asarray(w, np.float32),
+        np.asarray(indices, np.uint32),
+    )
+
+
+def _limb_profile(name):
+    """Return a radius profile for exposed anatomical skin limbs."""
+    if name.startswith("uarm_"):
+        return lambda t: 1.00 - 0.22 * t + 0.04 * math.sin(math.pi * t)
+    if name.startswith("farm_"):
+        return lambda t: 0.98 - 0.30 * t + 0.08 * math.sin(math.pi * t)
+    if name.startswith("thigh_"):
+        return lambda t: 1.00 - 0.24 * t + 0.04 * math.sin(math.pi * t)
+    if name.startswith("shin_"):
+        return lambda t: 0.84 - 0.22 * t + 0.30 * math.sin(math.pi * t)
+    return None
+
+
 _GARMENT_CAP_SCALE = {
     # Torso bones: shallow TOP caps (so the shirt doesn't balloon over the
     # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
@@ -232,9 +331,17 @@ def build(bones, shape=None) -> SkinnedMesh:
             top_scale, bot_scale = 0.90, 0.25
         else:
             top_scale, bot_scale = 1.0, 1.0
-        v, n, ba, bb, w, idx = _capsule(i, parent, length, r,
-                                         top_cap_scale=top_scale,
-                                         bottom_cap_scale=bot_scale)
+        profile = _limb_profile(name)
+        if profile is None:
+            v, n, ba, bb, w, idx = _capsule(i, parent, length, r,
+                                             top_cap_scale=top_scale,
+                                             bottom_cap_scale=bot_scale)
+        else:
+            v, n, ba, bb, w, idx = _profiled_capsule(
+                i, parent, length, r, profile,
+                top_cap_scale=top_scale,
+                bottom_cap_scale=bot_scale,
+            )
         R = mathx.align_y_to(tip_vec)
         v = v @ R.T
         n = n @ R.T
