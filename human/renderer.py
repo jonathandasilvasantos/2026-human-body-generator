@@ -37,7 +37,7 @@ in vec3 v_pos;
 out vec4 frag;
 
 uniform vec3  u_color;
-uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye
+uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye, 4 = shoe
 uniform float u_seed;   // per-character random seed in [0,1]
 
 // cheap 3D hash -> [0,1]
@@ -81,6 +81,15 @@ float fbm(vec3 p) {
     return sum / norm;
 }
 
+float circle_tile(vec2 uv, float r) {
+    vec2 p = fract(uv) - 0.5;
+    return 1.0 - smoothstep(r, r + 0.035, length(p));
+}
+
+float diamond(vec2 uv, float r) {
+    return 1.0 - smoothstep(r, r + 0.035, abs(uv.x) + abs(uv.y));
+}
+
 void main() {
     vec3 n = normalize(v_nrm);
     vec3 sample_p = v_pos + vec3(u_seed * 37.0, u_seed * 13.0, u_seed * 91.0);
@@ -122,6 +131,56 @@ void main() {
 
         float lint = fbm(sample_p * 24.0);
         albedo *= 0.96 + 0.07 * lint;
+
+        // PROCEDURAL PRINTS: UV-free tile coordinates. A cylindrical angle
+        // term gives seamless wraparound on torso/skirt shells, while a small
+        // world-space component keeps sleeves/pants aligned with fabric flow.
+        float theta = atan(v_pos.z, v_pos.x) / 6.2831853;
+        vec2 tile_uv = vec2(theta * 5.0 + v_pos.x * 1.7, v_pos.y * 5.4);
+        float style = hash3(u_color * vec3(7.1, 11.3, 17.7) + vec3(u_seed));
+        float print_mask = 0.0;
+        if (style < 0.34) {
+            // rugby / Breton-style stripes
+            print_mask = smoothstep(0.58, 0.66, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
+        } else if (style < 0.67) {
+            // polka dots with staggered rows to hide repetition
+            vec2 dots_uv = tile_uv * vec2(1.25, 1.0);
+            dots_uv.x += 0.5 * step(0.5, fract(dots_uv.y * 0.5));
+            print_mask = circle_tile(dots_uv, 0.22);
+        } else {
+            // soft check/plaid block intersections
+            float sx = smoothstep(0.72, 0.80, 0.5 + 0.5 * cos(tile_uv.x * 6.2831853));
+            float sy = smoothstep(0.70, 0.78, 0.5 + 0.5 * cos(tile_uv.y * 6.2831853));
+            print_mask = max(sx * 0.75, sy);
+        }
+
+        float lum = dot(u_color, vec3(0.299, 0.587, 0.114));
+        vec3 light_print = mix(u_color, vec3(1.0), 0.46);
+        vec3 dark_print = u_color * 0.42;
+        vec3 print_color = (lum < 0.48) ? light_print : dark_print;
+        float print_strength = 0.38 + 0.18 * hash3(u_color * 19.0 + vec3(u_seed * 5.0));
+        albedo = mix(albedo, print_color, print_mask * print_strength);
+
+        // Localized chest decal: a front-facing, torso-height stamp. This is
+        // effectively a procedural decal projection with soft spatial gating,
+        // so it does not bleed onto sleeves, lower garments, or shoes.
+        vec2 decal_uv = vec2(v_pos.x / 0.12, (v_pos.y - 0.34) / 0.13);
+        float front_gate = smoothstep(0.34, 0.62, n.z);
+        float x_gate = 1.0 - smoothstep(0.72, 0.98, abs(decal_uv.x));
+        float y_gate = 1.0 - smoothstep(0.82, 1.06, abs(decal_uv.y));
+        float decal_gate = front_gate * x_gate * y_gate;
+        float decal_style = hash3(u_color * 31.0 + vec3(u_seed * 9.0));
+        float decal_mask = 0.0;
+        if (decal_style < 0.50) {
+            decal_mask = circle_tile(decal_uv * 0.5 + 0.5, 0.32);
+            decal_mask *= 1.0 - circle_tile(decal_uv * 0.5 + 0.5, 0.13);
+        } else {
+            decal_mask = diamond(decal_uv, 0.46);
+            decal_mask *= 1.0 - diamond(decal_uv, 0.18);
+        }
+        decal_mask *= decal_gate;
+        vec3 decal_color = (lum < 0.48) ? mix(u_color, vec3(1.0), 0.62) : u_color * 0.28;
+        albedo = mix(albedo, decal_color, decal_mask * 0.72);
     } else if (u_mode == 2) {
         // HAIR: strongly anisotropic fBm -- long wavelength along the head's
         // vertical axis, short across it -> reads as vertical strands.
@@ -132,6 +191,10 @@ void main() {
         float line = 0.5 + 0.5 * cos((v_pos.x + v_pos.z * 0.35) * 170.0
                                       + fbm(sample_p * 9.0) * 5.0);
         albedo *= 0.90 + 0.16 * line;
+    } else if (u_mode == 4) {
+        // SHOES: matte leather/rubber. Keep them out of clothing print logic.
+        float grain = fbm(sample_p * 18.0);
+        albedo *= 0.92 + 0.10 * grain;
     } else {
         // EYES: keep sclera/iris/pupil out of the skin pigmentation path.
         // The eye surface needs clean wet specular response, not pores or
