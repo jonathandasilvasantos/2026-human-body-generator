@@ -103,6 +103,30 @@ retargeted onto two different procedurally-generated characters:
 - All offsets factored through a single `_eye_metrics()` so every layer
   stays concentric and identically converged. See `notes/eye_realism.md`.
 
+### Facial animation — ARKit-52 / FACS-aligned rig
+- Standardized on Apple's 52-channel **ARKit blendshape** spec, the
+  industry-de-facto facial-animation API also used by Epic MetaHumans,
+  Live Link Face, NVIDIA Audio2Face and most face-tracking SDKs.
+  Channels are FACS-coded (Ekman & Friesen 1978) so the rig speaks the
+  same language as the academic literature.
+- `human/face_anim.py` defines the 52 canonical channel names,
+  FACS-coded named presets (Ekman six + Duchenne smile + contempt +
+  visemes), `FaceRig.resolve()` and a `FaceClip` keyframe interpolator.
+- Each ARKit weight modulates a parameter of the matching parametric
+  primitive: `eyeBlink*` -> upper-lid Y, `cheekSquint*` -> lower-lid
+  raise (Duchenne marker), `eyeLook*` -> per-eye iris/pupil offset,
+  `mouthSmile*`/`mouthFrown*` -> per-side corner Y, `jawOpen` -> lip
+  separation, `mouthPucker`/`mouthFunnel` -> lip ring squeeze, etc.
+- Per-side channels keep asymmetry first-class: contempt, wink,
+  single-side brow flash, asymmetric anger all fall out for free.
+- `Appearance.expression` (legacy named preset) and the new
+  `Appearance.blendshapes` dict layer cleanly: e.g.
+  `expression="smile", blendshapes={"eyeBlinkLeft": 1.0}` gives a
+  smiling left-eye wink.
+- See `notes/facial_animation.md`. Capture matrices live in
+  `tools/face_anim_capture.py` (`presets`, `clips`, `channels`,
+  `asymmetry`, `narrative`, `crossvalidate`, `with_pose`).
+
 ### Hair + facial hair
 - Styles: bald / buzz / short / medium / long (drape past the shoulders)
 - Procedural eyebrows

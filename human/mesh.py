@@ -1040,6 +1040,32 @@ def _eye_metrics(length, head_d):
     return sep, y, z, eye_r, conv_shift
 
 
+def _gaze_offset(eye_r, weights):
+    """Per-eye (dx, dy) iris offset from the four eyeLook* channels.
+
+    Returned as ``(dx_left, dy_left, dx_right, dy_right)``. Side-naming
+    follows ARKit / character POV: side=+1 in ``_eye_metrics`` is the
+    character's LEFT eye. ``In`` is medial (toward nose), ``Out`` is
+    lateral (toward temple).
+    """
+    from . import face_anim as _fa
+    if weights is None:
+        return 0.0, 0.0, 0.0, 0.0
+    amp_x = eye_r * 0.45
+    amp_y = eye_r * 0.40
+    # Left eye: nose is at -X from its position, so In = -X, Out = +X.
+    dx_l = amp_x * (_fa.w(weights, "eyeLookOutLeft")
+                    - _fa.w(weights, "eyeLookInLeft"))
+    dy_l = amp_y * (_fa.w(weights, "eyeLookUpLeft")
+                    - _fa.w(weights, "eyeLookDownLeft"))
+    # Right eye: nose is at +X from its position, so In = +X, Out = -X.
+    dx_r = amp_x * (_fa.w(weights, "eyeLookInRight")
+                    - _fa.w(weights, "eyeLookOutRight"))
+    dy_r = amp_y * (_fa.w(weights, "eyeLookUpRight")
+                    - _fa.w(weights, "eyeLookDownRight"))
+    return dx_l, dy_l, dx_r, dy_r
+
+
 def build_eyes(bones, shape=None) -> SkinnedMesh:
     info = _head_info(bones, shape)
     if info is None:
@@ -1089,30 +1115,28 @@ def build_limbus(bones, shape=None) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_iris(bones, shape=None) -> SkinnedMesh:
+def build_iris(bones, shape=None, weights=None) -> SkinnedMesh:
     info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
     sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
     iris_r = eye_r * IRIS_RATIO
-    # Slight forward dome on the iris (rz a bit thicker than before) so
-    # the colored disc reads as recessed under a corneal bulge rather
-    # than as a perfectly flat decal stuck to the sclera.
     radii = (iris_r, iris_r, iris_r * 0.42)
     z_iris = z + eye_r * 0.75
+    dx_l, dy_l, dx_r, dy_r = _gaze_offset(eye_r, weights)
     chunks = [
-        prim.ellipsoid((+sep - conv, y, z_iris), radii, head_idx, parent,
-                       rings=8, radial=16),
-        prim.ellipsoid((-sep + conv, y, z_iris), radii, head_idx, parent,
-                       rings=8, radial=16),
+        prim.ellipsoid((+sep - conv + dx_l, y + dy_l, z_iris),
+                       radii, head_idx, parent, rings=8, radial=16),
+        prim.ellipsoid((-sep + conv + dx_r, y + dy_r, z_iris),
+                       radii, head_idx, parent, rings=8, radial=16),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_pupils(bones, shape=None) -> SkinnedMesh:
+def build_pupils(bones, shape=None, weights=None) -> SkinnedMesh:
     """Small dark pupil in the centre of each iris.
 
     Pupil diameter is ~30% of the iris (≈3mm of a 12mm iris under typical
@@ -1127,18 +1151,19 @@ def build_pupils(bones, shape=None) -> SkinnedMesh:
     pr = iris_r * PUPIL_RATIO
     radii = (pr, pr, pr * 0.4)
     z_pup = z + eye_r * 0.86
+    dx_l, dy_l, dx_r, dy_r = _gaze_offset(eye_r, weights)
     chunks = [
-        prim.ellipsoid((+sep - conv, y, z_pup), radii, head_idx, parent,
-                       rings=6, radial=12),
-        prim.ellipsoid((-sep + conv, y, z_pup), radii, head_idx, parent,
-                       rings=6, radial=12),
+        prim.ellipsoid((+sep - conv + dx_l, y + dy_l, z_pup),
+                       radii, head_idx, parent, rings=6, radial=12),
+        prim.ellipsoid((-sep + conv + dx_r, y + dy_r, z_pup),
+                       radii, head_idx, parent, rings=6, radial=12),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_collarette(bones, shape=None) -> SkinnedMesh:
+def build_collarette(bones, shape=None, weights=None) -> SkinnedMesh:
     """Faint darker ring inside the iris -- the iris collarette.
 
     Real irises have a visible boundary between the pupillary zone and
@@ -1157,11 +1182,12 @@ def build_collarette(bones, shape=None) -> SkinnedMesh:
     coll_r = iris_r * 0.58
     radii = (coll_r, coll_r, coll_r * 0.16)
     z_col = z + eye_r * 0.81
+    dx_l, dy_l, dx_r, dy_r = _gaze_offset(eye_r, weights)
     chunks = [
-        prim.ellipsoid((+sep - conv, y, z_col), radii, head_idx, parent,
-                       rings=5, radial=14),
-        prim.ellipsoid((-sep + conv, y, z_col), radii, head_idx, parent,
-                       rings=5, radial=14),
+        prim.ellipsoid((+sep - conv + dx_l, y + dy_l, z_col),
+                       radii, head_idx, parent, rings=5, radial=14),
+        prim.ellipsoid((-sep + conv + dx_r, y + dy_r, z_col),
+                       radii, head_idx, parent, rings=5, radial=14),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
@@ -1195,7 +1221,7 @@ def build_caruncle(bones, shape=None) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_catchlights(bones, shape=None) -> SkinnedMesh:
+def build_catchlights(bones, shape=None, weights=None) -> SkinnedMesh:
     """Small specular catchlights on the upper-outer iris of each eye.
 
     A single bright speck per eye fakes the corneal highlight that real
@@ -1216,10 +1242,11 @@ def build_catchlights(bones, shape=None) -> SkinnedMesh:
     dy = iris_r * 0.42
     dx = iris_r * 0.30
     z_cat = z + eye_r * 0.92
+    gx_l, gy_l, gx_r, gy_r = _gaze_offset(eye_r, weights)
     chunks = [
-        prim.ellipsoid((+sep - conv + dx, y + dy, z_cat), radii,
+        prim.ellipsoid((+sep - conv + dx + gx_l, y + dy + gy_l, z_cat), radii,
                        head_idx, parent, rings=4, radial=10),
-        prim.ellipsoid((-sep + conv - dx, y + dy, z_cat), radii,
+        prim.ellipsoid((-sep + conv - dx + gx_r, y + dy + gy_r, z_cat), radii,
                        head_idx, parent, rings=4, radial=10),
     ]
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
@@ -1227,14 +1254,19 @@ def build_catchlights(bones, shape=None) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_eyelids(bones, shape=None, expression="neutral") -> SkinnedMesh:
+def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
     """Skin-colored upper/lower eyelid folds that mask the spherical eyeballs.
 
-    This keeps the existing simple eye spheres, but exposes them through a
-    narrower almond aperture instead of showing full round balls. The
-    aperture is widened or narrowed according to ``expression`` so squints
-    and surprise read at the eye level as well as the mouth level.
+    Driven by ARKit weights:
+      - ``eyeBlink{Left,Right}``  -> upper lid drops to meet lower (full
+        closure at w=1).
+      - ``eyeWide{Left,Right}``   -> aperture x (1 + 0.30*w).
+      - ``eyeSquint{Left,Right}`` -> aperture x (1 - 0.45*w), via lower
+        lid raise (squint is a *lower-lid* tightening in FACS AU7).
+      - ``cheekSquint{Left,Right}`` -> additional lower-lid lift (AU6,
+        Duchenne marker; layered on top of squint).
     """
+    from . import face_anim as _fa
     info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
@@ -1244,24 +1276,40 @@ def build_eyelids(bones, shape=None, expression="neutral") -> SkinnedMesh:
     z = head_d * 0.78
     eye_r = length * 0.060
 
-    # Slightly in front of the sclera/iris so depth testing naturally hides
-    # the upper/lower poles of the eye sphere. Upper lid is thicker and
-    # tilts outward-up for an almond shape; lower lid is thinner.
     lid_z = z + eye_r * 0.96
     hx = length * 0.068
-    upper_hy = length * (0.022 if expression != "surprised" else 0.016)
-    lower_hy = length * 0.012
-    aperture = 1.0
-    if expression == "squint":
-        aperture = 0.62
-    elif expression == "surprised":
-        aperture = 1.22
-    upper_y = y + eye_r * (0.70 * aperture)
-    lower_y = y - eye_r * (0.60 * aperture)
 
     chunks = []
-    for side in (+1.0, -1.0):
+    # side=+1 is character's LEFT eye (camera right). ARKit naming is
+    # from the *character's* point of view, matching this convention.
+    for side, suffix in ((+1.0, "Left"), (-1.0, "Right")):
         x = side * sep
+        blink   = _fa.w(weights, f"eyeBlink{suffix}")
+        wide    = _fa.w(weights, f"eyeWide{suffix}")
+        squint  = _fa.w(weights, f"eyeSquint{suffix}")
+        cheek_s = _fa.w(weights, f"cheekSquint{suffix}")
+
+        # base aperture multiplier from wide/squint (excluding blink).
+        aperture = 1.0 + 0.30 * wide - 0.45 * squint
+        if aperture < 0.05:
+            aperture = 0.05
+
+        upper_y = y + eye_r * (0.70 * aperture)
+        lower_y = y - eye_r * (0.60 * aperture)
+        # cheekSquint pulls the *lower* lid up (orbicularis oculi, pars
+        # orbitalis) without touching the upper lid -- the Duchenne tell.
+        # Bigger amplitude makes the eye-narrowing read clearly when
+        # paired with a smile.
+        lower_y += eye_r * 0.32 * cheek_s
+
+        # Blink: upper lid sweeps down to meet lower; lower stays put.
+        if blink > 0.0:
+            target_y = lower_y + eye_r * 0.05
+            upper_y = upper_y * (1.0 - blink) + target_y * blink
+
+        upper_hy = length * (0.022 - 0.006 * wide)
+        lower_hy = length * (0.012 + 0.004 * (squint + cheek_s))
+
         chunks.append(prim.flat_patch(
             (x, upper_y, lid_z),
             (hx, upper_hy),
@@ -1284,15 +1332,27 @@ def build_eyelids(bones, shape=None, expression="neutral") -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
-def build_lips(bones, shape=None, expression="neutral") -> SkinnedMesh:
-    """Upper + lower lip with a subtle cupid's bow and expression offsets.
+def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
+    """Upper + lower lip with a subtle cupid's bow and ARKit-driven offsets.
 
-    Upper lip is built from two halves (left + right peak) with a small
-    central dip between them, giving a readable cupid's bow. The lower
-    lip is a single fuller pillow. ``expression`` slides the mouth corners
-    up (smile) or down (frown), and separates the lips vertically when
-    ``surprised`` so the mouth reads as open.
+    Driven channels:
+      - ``jawOpen``                          -> lip vertical separation.
+      - ``mouthSmile{Left,Right}``           -> per-side corner lift.
+      - ``mouthFrown{Left,Right}``           -> per-side corner drop.
+      - ``mouthDimple{Left,Right}``          -> corner pulled back/in.
+      - ``mouthStretch{Left,Right}``         -> corner widened sideways.
+      - ``mouthPress{Left,Right}``           -> upper/lower lips squeezed
+        together + thinner ry.
+      - ``mouthPucker``                      -> lips pulled forward + in.
+      - ``mouthFunnel``                      -> lips pushed forward, ring
+        opens (additive with jawOpen).
+      - ``mouthLeft`` / ``mouthRight``       -> whole-mouth lateral shift.
+      - ``mouthUpperUp{Left,Right}``         -> per-side upper lip raise.
+      - ``mouthLowerDown{Left,Right}``       -> per-side lower lip drop.
+      - ``noseSneer{Left,Right}``            -> per-side upper lip raise
+        (adds to mouthUpperUp; AU9 anchors the snarl).
     """
+    from . import face_anim as _fa
     info = _head_info(bones, shape)
     if info is None:
         return _empty_mesh()
@@ -1301,51 +1361,92 @@ def build_lips(bones, shape=None, expression="neutral") -> SkinnedMesh:
     z = head_d * 0.86
     fullness = _shape_trait(shape, "lip_fullness", 1.0)
 
-    corner_lift = 0.0
-    mouth_open = 0.0
-    if expression == "smile":
-        corner_lift = length * 0.014
-    elif expression == "frown":
-        corner_lift = -length * 0.012
-    elif expression == "surprised":
-        mouth_open = length * 0.014
+    jaw_open    = _fa.w(weights, "jawOpen")
+    pucker      = _fa.w(weights, "mouthPucker")
+    funnel      = _fa.w(weights, "mouthFunnel")
+    mouth_left  = _fa.w(weights, "mouthLeft")
+    mouth_right = _fa.w(weights, "mouthRight")
+    lateral     = (mouth_left - mouth_right) * length * 0.020
 
-    # Upper lip: two symmetric lobes, narrow, peaked slightly off-center.
+    smile_l  = _fa.w(weights, "mouthSmileLeft")
+    smile_r  = _fa.w(weights, "mouthSmileRight")
+    frown_l  = _fa.w(weights, "mouthFrownLeft")
+    frown_r  = _fa.w(weights, "mouthFrownRight")
+    dimple_l = _fa.w(weights, "mouthDimpleLeft")
+    dimple_r = _fa.w(weights, "mouthDimpleRight")
+    stretch_l = _fa.w(weights, "mouthStretchLeft")
+    stretch_r = _fa.w(weights, "mouthStretchRight")
+    press_l  = _fa.w(weights, "mouthPressLeft")
+    press_r  = _fa.w(weights, "mouthPressRight")
+    upUp_l   = _fa.w(weights, "mouthUpperUpLeft")
+    upUp_r   = _fa.w(weights, "mouthUpperUpRight")
+    lowDn_l  = _fa.w(weights, "mouthLowerDownLeft")
+    lowDn_r  = _fa.w(weights, "mouthLowerDownRight")
+    sneer_l  = _fa.w(weights, "noseSneerLeft")
+    sneer_r  = _fa.w(weights, "noseSneerRight")
+
+    # Vertical separation: jawOpen drops lower lip, mouthClose pulls
+    # upper down to meet it (handled implicitly via reduced upper Y).
+    open_amt = length * 0.030 * jaw_open + length * 0.010 * funnel
+
+    # Upper lip: two symmetric lobes; per-side raise from upUp + sneer.
     up_half_sep = length * 0.028
-    up_rx = length * 0.048
-    up_ry = length * 0.011 * fullness
-    up_rz = length * 0.014 * fullness
-    up_y = y_mouth + length * 0.010 + mouth_open * 0.35
+    up_rx = length * (0.048 - 0.012 * pucker + 0.010 * stretch_l)  # rough
+    up_ry = length * 0.011 * fullness * (1.0 - 0.35 * (press_l + press_r) * 0.5)
+    up_rz = length * (0.014 + 0.012 * pucker + 0.008 * funnel) * fullness
+    up_y = y_mouth + length * 0.010 + open_amt * 0.35
+
+    up_L_y = up_y + length * 0.014 * (upUp_l + 0.60 * sneer_l)
+    up_R_y = up_y + length * 0.014 * (upUp_r + 0.60 * sneer_r)
     upper_L = prim.ellipsoid(
-        (+up_half_sep, up_y, z),
+        (+up_half_sep + lateral, up_L_y, z + length * 0.005 * pucker),
         (up_rx, up_ry, up_rz),
         head_idx, parent, rings=6, radial=14,
     )
     upper_R = prim.ellipsoid(
-        (-up_half_sep, up_y, z),
+        (-up_half_sep + lateral, up_R_y, z + length * 0.005 * pucker),
         (up_rx, up_ry, up_rz),
         head_idx, parent, rings=6, radial=14,
     )
-    # Mouth corners -- slide up/down with smile/frown.
+
+    # Mouth corners: per-side smile / frown / dimple / stretch.
+    base_corner_x = length * 0.075
     corner_rx = length * 0.014
     corner_ry = length * 0.010
     corner_rz = length * 0.010
-    corner_x = length * 0.075
-    corner_y = y_mouth + length * 0.001 + corner_lift
-    corner_L = prim.ellipsoid(
-        (+corner_x, corner_y, z - length * 0.003),
-        (corner_rx, corner_ry, corner_rz),
-        head_idx, parent, rings=5, radial=10,
-    )
-    corner_R = prim.ellipsoid(
-        (-corner_x, corner_y, z - length * 0.003),
-        (corner_rx, corner_ry, corner_rz),
-        head_idx, parent, rings=5, radial=10,
-    )
-    # Lower lip: wider, fuller pillow. Pushed further down when surprised.
+
+    def _corner(side_sign, smile, frown, dimple, stretch):
+        # Wider amplitude than the legacy preset so a w=0.7 smile reads
+        # plainly in a thumbnail-sized render. Frown amplitude is kept
+        # smaller because mouth-corner-down past a few mm starts to
+        # caricature.
+        lift = length * (0.026 * smile - 0.018 * frown)
+        # dimple pulls corner back (-Z) and slightly inward (X toward 0).
+        x = side_sign * (base_corner_x + length * 0.014 * stretch
+                         - length * 0.006 * dimple)
+        y = y_mouth + length * 0.001 + lift
+        z_off = -length * 0.003 - length * 0.008 * dimple
+        return prim.ellipsoid(
+            (x + lateral, y, z + z_off),
+            (corner_rx, corner_ry, corner_rz),
+            head_idx, parent, rings=5, radial=10,
+        )
+
+    corner_L = _corner(+1.0, smile_l, frown_l, dimple_l, stretch_l)
+    corner_R = _corner(-1.0, smile_r, frown_r, dimple_r, stretch_r)
+
+    # Lower lip: wider pillow. jawOpen + lowerDown drop it; pucker
+    # narrows and pushes forward; press thins it.
+    avg_lowDn = 0.5 * (lowDn_l + lowDn_r)
+    avg_press = 0.5 * (press_l + press_r)
+    low_y = (y_mouth - length * 0.010 - open_amt * 0.65
+             - length * 0.014 * avg_lowDn)
+    low_rx = length * (0.082 - 0.022 * pucker + 0.014 * (stretch_l + stretch_r) * 0.5)
+    low_ry = length * 0.014 * fullness * (1.0 - 0.40 * avg_press)
+    low_rz = length * (0.016 + 0.010 * pucker + 0.008 * funnel) * fullness
     lower = prim.ellipsoid(
-        (0.0, y_mouth - length * 0.010 - mouth_open * 0.65, z + length * 0.002),
-        (length * 0.082, length * 0.014 * fullness, length * 0.016 * fullness),
+        (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker),
+        (low_rx, low_ry, low_rz),
         head_idx, parent, rings=6, radial=20,
     )
     chunks = [upper_L, upper_R, corner_L, corner_R, lower]

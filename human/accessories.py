@@ -182,42 +182,66 @@ def build_hair(bones, style: str) -> SkinnedMesh:
 
 # --- eyebrows ----------------------------------------------------------------
 
-def build_eyebrows(bones) -> SkinnedMesh:
+def build_eyebrows(bones, weights=None) -> SkinnedMesh:
+    """Three-patch eyebrow per side, animated by ARKit brow channels.
+
+    Driven channels:
+      - ``browInnerUp``         -> both inner heads lift (and pinch
+        slightly toward midline -- the surprise/sad inner-brow raise).
+      - ``browOuterUp{L,R}``    -> per-side outer tail lifts (the
+        outer-brow flash for surprise / curiosity).
+      - ``browDown{L,R}``       -> whole brow drops + inner pinch
+        toward midline (the AU4 frown).
+    """
+    from . import face_anim as _fa
     info = _head_info(bones)
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, _r, head_w, head_d = info
 
-    # Eyebrows are composed from three small patches per side: an inner
-    # head (closer to the nose, slightly lower), a middle body (peak of
-    # the arch), and an outer tail (fades out toward the temple, slightly
-    # higher). This replaces the single horizontal bar and prevents the
-    # fixed "angry" look by arching upward, not inward.
     sep_inner = length * 0.085
     sep_mid   = length * 0.118
     sep_outer = length * 0.148
-    y_inner = length * (H_BROW - 0.020)
-    y_mid   = length * (H_BROW + 0.005)
-    y_outer = length * (H_BROW - 0.002)
+    y_inner_b = length * (H_BROW - 0.020)
+    y_mid_b   = length * (H_BROW + 0.005)
+    y_outer_b = length * (H_BROW - 0.002)
     z = head_d * 0.86
     hy = length * 0.013
     inner_size  = (length * 0.024, hy)
     mid_size    = (length * 0.032, hy * 1.05)
     outer_size  = (length * 0.026, hy * 0.85)
 
+    inner_up   = _fa.w(weights, "browInnerUp")
+    LIFT       = length * 0.030     # full-weight vertical lift
+    PINCH      = length * 0.012     # full-weight inner-X pull toward midline
+    DROP       = length * 0.025     # full-weight brow-down drop
+
     chunks = []
-    for side in (+1.0, -1.0):
+    for side, suffix in ((+1.0, "Left"), (-1.0, "Right")):
+        outer_up = _fa.w(weights, f"browOuterUp{suffix}")
+        down     = _fa.w(weights, f"browDown{suffix}")
+
+        # Inner head: lifts with browInnerUp, drops with browDown,
+        # and (for browDown) is pulled medially producing the AU4 pinch.
+        inner_dy = LIFT * inner_up - DROP * down
+        inner_dx = -side * PINCH * (down + 0.30 * inner_up)
+        # Mid body: averaged effect.
+        mid_dy = 0.5 * (LIFT * inner_up + LIFT * outer_up) - DROP * down
+        mid_dx = -side * PINCH * 0.45 * down
+        # Outer tail: only outerUp + brow-down.
+        outer_dy = LIFT * outer_up - 0.6 * DROP * down
+
         chunks += [
-            prim.flat_patch((side * sep_inner, y_inner, z), inner_size,
-                            head_idx, parent,
+            prim.flat_patch((side * sep_inner + inner_dx, y_inner_b + inner_dy, z),
+                            inner_size, head_idx, parent,
                             normal=(side * 0.10, -0.12, 1.0),
                             subdiv=(3, 2), thickness=0.0035),
-            prim.flat_patch((side * sep_mid, y_mid, z), mid_size,
-                            head_idx, parent,
+            prim.flat_patch((side * sep_mid + mid_dx, y_mid_b + mid_dy, z),
+                            mid_size, head_idx, parent,
                             normal=(side * 0.05, 0.05, 1.0),
                             subdiv=(4, 2), thickness=0.0035),
-            prim.flat_patch((side * sep_outer, y_outer, z), outer_size,
-                            head_idx, parent,
+            prim.flat_patch((side * sep_outer, y_outer_b + outer_dy, z),
+                            outer_size, head_idx, parent,
                             normal=(side * 0.25, -0.02, 1.0),
                             subdiv=(3, 2), thickness=0.003),
         ]
