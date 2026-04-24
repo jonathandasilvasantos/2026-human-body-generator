@@ -320,6 +320,66 @@ class LipsyncTrack:
         return w
 
 
+def _detect_bilabials(frames: List[Frame], labels: List[str]) -> List[str]:
+    """Relabel brief low-energy dips between voiced frames as MBP.
+
+    Bilabial stops (/m/, /b/, /p/) are characterised by a short (30-
+    90 ms) closure of the lips, visually the most salient consonant
+    cue. They are hard to identify from spectrum alone because the
+    closure itself is near-silent, but they are trivial to spot as a
+    notch in the energy envelope flanked by voiced speech on both
+    sides. This pass scans for that notch and replaces the 'sil' /
+    'etc' labels in the trough with 'MBP' so the lips briefly meet.
+    """
+    if not frames:
+        return labels
+    out = list(labels)
+    voiced = {"AI", "E", "O", "U", "L", "etc"}
+    # Looking for: [voiced] [dip: 1-9 frames of quiet] [voiced]
+    n = len(frames)
+    i = 1
+    while i < n - 1:
+        # Find start of a dip.
+        if out[i] not in ("sil", "etc"):
+            i += 1
+            continue
+        # Scan the dip.
+        j = i
+        while j < n and out[j] in ("sil", "etc") and frames[j].dbfs < SIL_DBFS + 8.0:
+            j += 1
+        dip_frames = j - i
+        # 30-110 ms typical bilabial closure. At 10 ms hop that is 3-11
+        # frames. Require voiced on both sides of the dip.
+        if 2 <= dip_frames <= 11 and i > 0 and j < n:
+            pre = out[i - 1]
+            post = out[j] if j < n else "sil"
+            if pre in voiced and post in voiced:
+                # Label the central frame of the dip as MBP.
+                mid = (i + j) // 2
+                out[mid] = "MBP"
+        i = max(j, i + 1)
+    return out
+
+
+def _smooth_energy(rms: np.ndarray, hop_ms: float = HOP_MS,
+                   tau_ms: float = 35.0) -> np.ndarray:
+    """Critically-damped first-order smoother on the energy envelope.
+
+    Without smoothing, frame-to-frame RMS jitter drives a visible
+    flicker in jawOpen. tau=35ms (about 3 frames at a 10 ms hop)
+    removes per-frame noise while preserving syllabic rhythm.
+    """
+    if rms.size == 0:
+        return rms
+    a = math.exp(-hop_ms / max(tau_ms, 1e-3))
+    out = np.empty_like(rms)
+    acc = float(rms[0])
+    for i, v in enumerate(rms):
+        acc = a * acc + (1.0 - a) * float(v)
+        out[i] = acc
+    return out
+
+
 def from_wav(path: str) -> LipsyncTrack:
     """Analyse ``path`` and return a sampler over the full clip."""
     samples, sr = load_wav(path)
@@ -328,10 +388,12 @@ def from_wav(path: str) -> LipsyncTrack:
     frames = _frames(samples, sr)
     stats = _clip_stats(frames)
     labels = [_classify(f, stats) for f in frames]
+    labels = _detect_bilabials(frames, labels)
     segs = _compact(frames, labels)
     track = face_anim.VisemeTrack(segs)
     times = np.array([f.t for f in frames], dtype=np.float32)
     rms = np.array([f.rms for f in frames], dtype=np.float32)
+    rms = _smooth_energy(rms)
     # Normalise energy to a robust peak (95th percentile) so a single
     # clipped sample doesn't crush the rest of the clip.
     peak = float(np.percentile(rms, 95.0)) if rms.size else 1.0
