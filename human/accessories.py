@@ -44,6 +44,65 @@ def _hairline_cards(head_idx, parent, length, head_w, head_d, style):
     return []
 
 
+def _shape_scalp_cap(chunk, scalp_cy, scalp_rx, scalp_ry, scalp_rz, length,
+                     head_w, head_d, style):
+    """Displace scalp-cap vertices to add sideburns, temple taper and a
+    slight forward fringe.
+
+    The raw hemisphere_cap gives a clean geometric dome which reads as
+    plastic. Dropping the hairline at the temples (sideburns) and pushing
+    slightly forward over the forehead produces a more anatomical boundary
+    without individual strand geometry.
+    """
+    v, n, ba, bb, w, idx = chunk
+    v = v.copy()
+    y_min = float(v[:, 1].min())
+    y_max = float(v[:, 1].max())
+    y_span = max(y_max - y_min, 1e-6)
+    for k in range(v.shape[0]):
+        x = v[k, 0]
+        y = v[k, 1]
+        z = v[k, 2]
+        dx = (x - 0.0) / max(scalp_rx, 1e-6)
+        dz = (z - 0.0) / max(scalp_rz, 1e-6)
+        r2 = dx * dx + dz * dz
+        if r2 < 1e-6:
+            continue
+        edge = max(0.0, min(1.0, r2))
+        # front-hemisphere (+z): small forward/down fringe push
+        front = max(0.0, dz)
+        # side factor peaks at |dx| large, |dz| small (temples/ears)
+        side = max(0.0, abs(dx) - 0.25) * (1.0 - 0.8 * max(0.0, abs(dz)))
+        # Rim weight: 1 at the bottom of the cap, 0 at the crown.
+        rim = 1.0 - (y - y_min) / y_span
+        rim = min(1.0, max(0.0, rim))
+        rim = rim * rim  # bias toward the rim itself
+        # Sideburn drop at temples.
+        sb_gain = {"buzz": 0.018, "short": 0.028, "medium": 0.032,
+                   "long": 0.036}.get(style, 0.0)
+        v[k, 1] -= sb_gain * length * side * rim * edge
+        # Slight forward lobe over the forehead — brings hair forward so the
+        # front edge sits a bit inside the hairline rather than being a
+        # perfect arc.
+        fringe = {"buzz": 0.004, "short": 0.010, "medium": 0.014,
+                  "long": 0.012}.get(style, 0.0)
+        v[k, 2] += fringe * length * front * rim
+        # Tuck the bottom rim inward toward the skull so the cap's lower
+        # edge merges with the scalp instead of reading as a floating shell
+        # with a dark interior ridge. Strongest at the rim, zero at the
+        # crown.
+        # Shrink the rim slightly so the cap's lower edge meets the skull
+        # flush instead of hovering a few mm above it (which leaves a dark
+        # ring of interior when viewed head-on). The cap starts 2-5% wider
+        # than the skull, so a matching shrink lands it on the surface.
+        tuck = {"buzz": 0.030, "short": 0.030, "medium": 0.040,
+                "long": 0.045}.get(style, 0.0)
+        if rim > 0.0:
+            v[k, 0] -= tuck * x * rim
+            v[k, 2] -= tuck * z * rim
+    return (v, n, ba, bb, w, idx)
+
+
 # --- hair --------------------------------------------------------------------
 
 def build_hair(bones, style: str) -> SkinnedMesh:
@@ -66,36 +125,44 @@ def build_hair(bones, style: str) -> SkinnedMesh:
     if style == "buzz":
         # Very short fuzz: keep only the upper dome, ending above the brow.
         y_cut = (length * (H_HAIRLINE - 0.01) - scalp_cy) / scalp_ry
-        chunks = [prim.hemisphere_cap(
+        cap = prim.hemisphere_cap(
             (0.0, scalp_cy, 0.0),
             (scalp_rx, scalp_ry, scalp_rz),
             head_idx, parent,
-            rings=6, radial=22,
+            rings=8, radial=28,
             y_cutoff=max(-0.2, y_cut),
-        )]
+        )
+        chunks = [_shape_scalp_cap(cap, scalp_cy, scalp_rx, scalp_ry, scalp_rz,
+                                   length, head_w, head_d, "buzz")]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "short":
         # Cut near the anatomical hairline, not down over the eyebrows.
         y_cut = (length * (H_HAIRLINE - 0.04) - scalp_cy) / scalp_ry
-        chunks = [prim.hemisphere_cap(
+        rx, ry, rz = scalp_rx * 1.02, scalp_ry * 1.02, scalp_rz * 1.02
+        cap = prim.hemisphere_cap(
             (0.0, scalp_cy, -length * 0.01),
-            (scalp_rx * 1.02, scalp_ry * 1.02, scalp_rz * 1.02),
+            (rx, ry, rz),
             head_idx, parent,
-            rings=8, radial=24,
+            rings=10, radial=30,
             y_cutoff=max(-0.5, y_cut),
-        )]
+        )
+        chunks = [_shape_scalp_cap(cap, scalp_cy, rx, ry, rz,
+                                   length, head_w, head_d, "short")]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "medium":
         # More volume than short hair, but the cap still stops above the
         # orbits so it doesn't cover the face.
         y_cut = (length * (H_HAIRLINE - 0.08) - scalp_cy) / scalp_ry
-        chunks = [prim.hemisphere_cap(
+        rx, ry, rz = scalp_rx * 1.04, scalp_ry * 1.05, scalp_rz * 1.05
+        cap = prim.hemisphere_cap(
             (0.0, scalp_cy, -length * 0.01),
-            (scalp_rx * 1.04, scalp_ry * 1.05, scalp_rz * 1.05),
+            (rx, ry, rz),
             head_idx, parent,
-            rings=10, radial=26,
+            rings=12, radial=32,
             y_cutoff=max(-1.3, y_cut),
-        )]
+        )
+        chunks = [_shape_scalp_cap(cap, scalp_cy, rx, ry, rz,
+                                   length, head_w, head_d, "medium")]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "long":
         # Scalp cap + drape flowing down past the shoulders. The drape's
@@ -104,13 +171,17 @@ def build_hair(bones, style: str) -> SkinnedMesh:
         y_cut_top = (length * (H_HAIRLINE - 0.04) - scalp_cy) / scalp_ry
         drape_cy = length * 0.10
         drape_ry = length * 0.55  # not so tall: its top should sit below the crown
+        rx_top, ry_top, rz_top = (scalp_rx * 1.05, scalp_ry * 1.07,
+                                  scalp_rz * 1.07)
+        cap_top = prim.hemisphere_cap(
+            (0.0, scalp_cy, -length * 0.01),
+            (rx_top, ry_top, rz_top),
+            head_idx, parent,
+            rings=12, radial=32, y_cutoff=max(-1.6, y_cut_top),
+        )
         chunks = [
-            prim.hemisphere_cap(
-                (0.0, scalp_cy, -length * 0.01),
-                (scalp_rx * 1.05, scalp_ry * 1.07, scalp_rz * 1.07),
-                head_idx, parent,
-                rings=10, radial=28, y_cutoff=max(-1.6, y_cut_top),
-            ),
+            _shape_scalp_cap(cap_top, scalp_cy, rx_top, ry_top, rz_top,
+                             length, head_w, head_d, "long"),
             # Lower drape behind and around the head.
             prim.hemisphere_cap(
                 (0.0, drape_cy, -head_d * 1.55),
