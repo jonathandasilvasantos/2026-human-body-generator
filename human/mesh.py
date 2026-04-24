@@ -272,10 +272,10 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         _, u_parent, _, u_tip, u_r = bones[u_idx]
         u_tip = np.asarray(u_tip, dtype=np.float32)
         R = mathx.align_y_to(u_tip)
-        r_sh = (u_r + radius_inflate) * 0.72
+        r_sh = (u_r + radius_inflate) * 0.82
         v, n, ba, bb, w, idx = prim.ellipsoid(
-            (0.0, -0.005, 0.0),
-            (r_sh * 0.95, r_sh * 0.72, r_sh * 0.90),
+            (0.0, -0.004, 0.0),
+            (r_sh * 1.00, r_sh * 0.74, r_sh * 0.94),
             u_idx, u_parent, weight_self=0.72,
             rings=8, radial=12,
         )
