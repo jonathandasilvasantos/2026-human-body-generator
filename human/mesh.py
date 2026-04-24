@@ -206,11 +206,14 @@ def _limb_profile(name):
 
 
 _GARMENT_CAP_SCALE = {
-    # Torso bones: shallow TOP caps (so the shirt doesn't balloon over the
-    # neck) and tall BOTTOM caps (shirt + pants overlap at the waist with
-    # no visible belt-seam). Pelvis top cap is modest so the pants/shorts
-    # stop at hip level and the shirt clearly covers the midriff above.
-    "chest":  (0.14, 0.72),
+    # Torso bones: the top cap on `chest` forms the collar dome of the
+    # shirt. Previously this was very shallow (0.14) which produced an
+    # almost flat disc; when the character bent forward (bow/punch), the
+    # head's large skull ellipsoid punched through this disc and the face
+    # rendered on the shirt front. A taller dome (0.55) wraps the base of
+    # the neck and stays clear of the head under typical flexion. The
+    # bottom cap stays tall so shirt + pants overlap at the waist.
+    "chest":  (0.55, 0.72),
     "spine":  (0.18, 0.76),
     "pelvis": (0.22, 0.48),
     # Feet: shrink the HEEL cap so the shoe doesn't bulge up the shin.
