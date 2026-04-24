@@ -30,6 +30,75 @@ def _finish(chunks, R):
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
+def _hairline_cards(head_idx, parent, length, head_w, head_d, style):
+    """Small hair-card clusters around the frontal hairline and temples.
+
+    The cap/drape meshes provide volume; these cards make the scalp boundary
+    read from the front, approximating dense strand clumps without individual
+    fibers.
+    """
+    if style == "buzz":
+        y = length * (H_HAIRLINE - 0.010)
+        z = head_d * 0.88
+        return [prim.flat_patch(
+            (0.0, y, z),
+            (head_w * 0.68, length * 0.020),
+            head_idx, parent, normal=(0, 0.10, 1),
+            subdiv=(10, 2), thickness=0.002,
+        )]
+
+    if style == "short":
+        fringe_y = length * (H_HAIRLINE - 0.055)
+        temple_y = length * (H_HAIRLINE - 0.090)
+        return [
+            prim.flat_patch(
+                (0.0, fringe_y, head_d * 0.92),
+                (head_w * 0.46, length * 0.055),
+                head_idx, parent, normal=(0, 0.18, 1),
+                subdiv=(8, 3), thickness=0.003,
+            ),
+            prim.flat_patch(
+                (+head_w * 0.58, temple_y, head_d * 0.72),
+                (head_w * 0.18, length * 0.075),
+                head_idx, parent, normal=(0.35, 0.08, 1),
+                subdiv=(4, 4), thickness=0.003,
+            ),
+            prim.flat_patch(
+                (-head_w * 0.58, temple_y, head_d * 0.72),
+                (head_w * 0.18, length * 0.075),
+                head_idx, parent, normal=(-0.35, 0.08, 1),
+                subdiv=(4, 4), thickness=0.003,
+            ),
+        ]
+
+    if style in ("medium", "long"):
+        fringe_y = length * (H_HAIRLINE - 0.035)
+        temple_y = length * (H_EYE + 0.040)
+        temple_h = length * (0.13 if style == "medium" else 0.20)
+        return [
+            prim.flat_patch(
+                (0.0, fringe_y, head_d * 0.92),
+                (head_w * 0.42, length * 0.030),
+                head_idx, parent, normal=(0, 0.15, 1),
+                subdiv=(9, 3), thickness=0.003,
+            ),
+            prim.flat_patch(
+                (+head_w * 0.68, temple_y, head_d * 0.58),
+                (head_w * 0.16, temple_h),
+                head_idx, parent, normal=(0.45, -0.05, 1),
+                subdiv=(4, 6), thickness=0.003,
+            ),
+            prim.flat_patch(
+                (-head_w * 0.68, temple_y, head_d * 0.58),
+                (head_w * 0.16, temple_h),
+                head_idx, parent, normal=(-0.45, -0.05, 1),
+                subdiv=(4, 6), thickness=0.003,
+            ),
+        ]
+
+    return []
+
+
 # --- hair --------------------------------------------------------------------
 
 def build_hair(bones, style: str) -> SkinnedMesh:
@@ -59,6 +128,7 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             rings=6, radial=22,
             y_cutoff=max(-0.2, y_cut),
         )]
+        chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "short":
         # Cut just below brow for a short layered style with a visible hairline.
         y_cut = (length * (H_BROW - 0.02) - scalp_cy) / scalp_ry
@@ -69,6 +139,7 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             rings=8, radial=24,
             y_cutoff=max(-0.5, y_cut),
         )]
+        chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "medium":
         # Reaches past the ears down toward the jawline.
         y_cut = (length * (H_MOUTH + 0.04) - scalp_cy) / scalp_ry
@@ -79,6 +150,7 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             rings=10, radial=26,
             y_cutoff=max(-1.3, y_cut),
         )]
+        chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "long":
         # Scalp cap + drape flowing down past the shoulders. The drape's
         # own ellipsoid is positioned BELOW the skull so it reads as hair
@@ -101,6 +173,7 @@ def build_hair(bones, style: str) -> SkinnedMesh:
                 rings=10, radial=28, y_cutoff=-0.6,
             ),
         ]
+        chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     else:
         return _empty_mesh()
 
