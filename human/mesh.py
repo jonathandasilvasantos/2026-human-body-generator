@@ -1464,6 +1464,10 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     lowDn_r  = _fa.w(weights, "mouthLowerDownRight")
     sneer_l  = _fa.w(weights, "noseSneerLeft")
     sneer_r  = _fa.w(weights, "noseSneerRight")
+    roll_upper = _fa.w(weights, "mouthRollUpper")
+    roll_lower = _fa.w(weights, "mouthRollLower")
+    shrug_upper = _fa.w(weights, "mouthShrugUpper")
+    shrug_lower = _fa.w(weights, "mouthShrugLower")
     avg_smile = 0.5 * (smile_l + smile_r)
     avg_press = 0.5 * (press_l + press_r)
     mouth_tension = muscles["mouth_tension"]
@@ -1481,12 +1485,21 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     up_rx = length * (0.040 - 0.010 * pucker
                       + 0.008 * (stretch_l + stretch_r) * 0.5
                       - 0.004 * orbicularis_oris)
-    up_ry = length * 0.0085 * fullness * max(0.52, press_thin)
+    # Roll tucks the upper lip inward (hides the red vermillion zone over
+    # the teeth); shrug pushes it forward+up (AU17 mentalis for the lower,
+    # AU16 levator for the upper).
+    up_ry = length * 0.0085 * fullness * max(0.40, press_thin - 0.25 * roll_upper)
     up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel
-                      + 0.0025 * avg_press) * fullness * lip_volume
+                      + 0.0025 * avg_press
+                      - 0.003 * roll_upper) * fullness * lip_volume
     up_y = (y_mouth + length * 0.010 + open_amt * 0.35
-            + length * 0.004 * avg_smile - length * 0.010 * mouth_close)
-    lip_z_forward = length * (0.005 * pucker + 0.006 * funnel + 0.006 * jaw_forward)
+            + length * 0.004 * avg_smile - length * 0.010 * mouth_close
+            - length * 0.014 * roll_upper
+            + length * 0.008 * shrug_upper)
+    lip_z_forward = length * (0.005 * pucker + 0.006 * funnel
+                              + 0.006 * jaw_forward
+                              - 0.012 * roll_upper
+                              + 0.006 * shrug_upper)
 
     up_L_y = up_y + length * (0.014 * (upUp_l + 0.60 * sneer_l)
                               + 0.010 * smile_l - 0.004 * frown_l)
@@ -1539,16 +1552,22 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     avg_lowDn = 0.5 * (lowDn_l + lowDn_r)
     low_y = (y_mouth - length * 0.010 - open_amt * 0.65
              - length * 0.014 * avg_lowDn + length * 0.003 * avg_smile
-             + length * 0.012 * mouth_close)
+             + length * 0.012 * mouth_close
+             + length * 0.016 * roll_lower
+             + length * 0.008 * shrug_lower)
     low_rx = length * (0.070 - 0.018 * pucker
                        + 0.011 * (stretch_l + stretch_r) * 0.5
                        - 0.006 * orbicularis_oris)
-    low_ry = length * 0.011 * fullness * max(0.50, 1.0 - 0.34 * avg_press)
+    low_ry = length * 0.011 * fullness * max(
+        0.40, 1.0 - 0.34 * avg_press - 0.28 * roll_lower)
     low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel
-                       + 0.0025 * avg_press) * fullness * lip_volume
+                       + 0.0025 * avg_press
+                       - 0.004 * roll_lower) * fullness * lip_volume
     lower = prim.ellipsoid(
         (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker
-         + length * 0.004 * funnel + length * 0.006 * jaw_forward),
+         + length * 0.004 * funnel + length * 0.006 * jaw_forward
+         - length * 0.012 * roll_lower
+         + length * 0.006 * shrug_lower),
         (low_rx, low_ry, low_rz),
         head_idx, parent, rings=6, radial=20,
     )
@@ -1717,6 +1736,208 @@ def build_age_detail(bones, shape=None, age_group="adult") -> SkinnedMesh:
 
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_teeth(bones, shape=None, weights=None) -> SkinnedMesh:
+    """Upper + lower dental arches behind the lips.
+
+    Background: plausible speech visually *requires* visible teeth on open
+    vowels and fricatives (Ezzat & Poggio 2002; Edwards et al. 2016 "JALI").
+    Without them the mouth reads as an empty dark hole regardless of how
+    accurate the lip blendshapes are.
+
+    Geometry: two horseshoe-shaped bands of incisor-shaped flat patches.
+    - upper arch is rigidly skinned to the head bone (so it tracks the skull,
+      not the jaw) and positioned behind the upper lip
+    - lower arch translates downward by ``jawOpen`` so the bite opens as the
+      jaw drops, and laterally by ``jawLeft/Right`` for off-axis jaw motion
+    - visibility is gated by lip state (see build_lips for the reciprocal):
+      heavy mouthClose / mouthPress culls the bite-edge exposure further back
+      so the teeth stop poking through a pressed lip
+
+    The teeth are intentionally *slightly* recessed (z toward the skull) so
+    on a neutral mouth only a thin white bite line can appear, never a
+    toothy grimace.
+    """
+    from . import face_anim as _fa
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, _head_w, head_d = info
+
+    jaw_open = _fa.w(weights, "jawOpen")
+    mouth_close = _fa.w(weights, "mouthClose")
+    press = 0.5 * (_fa.w(weights, "mouthPressLeft")
+                   + _fa.w(weights, "mouthPressRight"))
+    jaw_left = _fa.w(weights, "jawLeft")
+    jaw_right = _fa.w(weights, "jawRight")
+    jaw_forward = _fa.w(weights, "jawForward")
+    roll_upper = _fa.w(weights, "mouthRollUpper")
+    roll_lower = _fa.w(weights, "mouthRollLower")
+    funnel = _fa.w(weights, "mouthFunnel")
+    pucker = _fa.w(weights, "mouthPucker")
+
+    # Effective bite opening: jawOpen drops the mandible, mouthClose pulls
+    # it back up, mouthPress seals the bite.
+    bite = max(0.0, jaw_open - 0.75 * mouth_close - 0.35 * press)
+
+    # Upper-lip exposure: mouthUpperUp* / noseSneer* raise the upper lip and
+    # reveal the incisors even without jaw motion (classic "snarl"). Lower
+    # lip analogue lets mouthLowerDown* drop the lip and expose the lower
+    # bite.
+    upper_reveal = 0.5 * (_fa.w(weights, "mouthUpperUpLeft")
+                          + _fa.w(weights, "mouthUpperUpRight")) + \
+                   0.30 * (_fa.w(weights, "noseSneerLeft")
+                           + _fa.w(weights, "noseSneerRight"))
+    lower_reveal = 0.5 * (_fa.w(weights, "mouthLowerDownLeft")
+                          + _fa.w(weights, "mouthLowerDownRight"))
+    smile_reveal = 0.5 * (_fa.w(weights, "mouthSmileLeft")
+                          + _fa.w(weights, "mouthSmileRight"))
+    stretch_reveal = 0.5 * (_fa.w(weights, "mouthStretchLeft")
+                            + _fa.w(weights, "mouthStretchRight"))
+    # A sealed bite with no independent lip raise should hide the teeth
+    # entirely (they sit behind the closed lip surface but any z-fighting
+    # or near-contact artefact reads as a poke-through at this primitive
+    # density).
+    # roll_upper/roll_lower *by themselves* mean the lip rolls over the
+    # bite -- the teeth should stay hidden. They only reveal teeth when
+    # combined with jaw_open (handled via the bite-line y shift above).
+    visible = (bite + 0.8 * upper_reveal + 0.7 * lower_reveal
+               + 0.6 * smile_reveal + 0.6 * stretch_reveal)
+    if mouth_close > 0.5 and visible < 0.12:
+        return _empty_mesh()
+
+    # Overall arch geometry. The dental arch in a human skull is a
+    # horseshoe whose width is roughly 0.70x the mouth width and whose
+    # depth (front-to-back) is ~1.0x its width. Numbers here are scaled
+    # fractions of head_length to match the rest of the face primitives.
+    y_mouth = length * H_MOUTH
+    z_front = head_d * 0.78   # slightly recessed vs lips (lips sit at 0.84)
+    arch_w = length * 0.062   # half-width of the arch at the molars
+    arch_d = length * 0.055   # front-to-back depth of the horseshoe
+
+    # Lateral jaw shift (AU26 asymmetric jaw motion).
+    lower_lateral = (jaw_left - jaw_right) * length * 0.012
+    forward_shift = jaw_forward * length * 0.008
+
+    # Upper arch y: just below the upper lip line. mouthRollUpper tucks the
+    # upper lip under, which *reveals* upper incisor edge -- so roll adds to
+    # exposure. pucker/funnel narrow the arch laterally (cheeks pull in).
+    up_y = y_mouth + length * (0.004 - 0.008 * roll_upper)
+    up_z = z_front + forward_shift - length * 0.002 * (pucker + funnel)
+
+    # Lower arch y: tracks the jaw -- drops with jawOpen, tucks with
+    # mouthRollLower (hides lower bite, e.g. FV viseme biting the lip).
+    low_drop = length * (0.034 * bite + 0.005 * funnel)
+    low_y = y_mouth - length * 0.004 - low_drop - length * 0.012 * roll_lower
+    low_z = z_front + forward_shift - length * 0.002 * (pucker + funnel)
+
+    # Number of "tooth" segments per arch -- front 10 in humans, but
+    # visually 8-9 segments reads cleanly at this primitive density.
+    n_teeth = 9
+    # Half-sweep angle across the horseshoe (radians). Wider angle -> the
+    # arch looks more like a semicircle.
+    half_sweep = math.radians(68.0)
+
+    def _tooth_placements(jaw_scale_x):
+        out = []
+        for i in range(n_teeth):
+            u = (i + 0.5) / n_teeth * 2.0 - 1.0   # -1..+1
+            theta = u * half_sweep
+            # Horseshoe: x = w*sin(theta); z = -d*(1 - cos(theta))
+            x = math.sin(theta) * arch_w * jaw_scale_x
+            z_off = -(1.0 - math.cos(theta)) * arch_d
+            # Individual tooth radii -- front incisors slightly larger, rear
+            # teeth taper down (canines -> premolars -> molars).
+            front = 1.0 - 0.55 * (u * u)
+            out.append((x, z_off, front))
+        return out
+
+    # Upper arch narrows slightly with pucker/funnel (cheek compression),
+    # lower arch follows jaw_forward -> forward cant.
+    up_scale  = 1.0 - 0.15 * pucker - 0.10 * funnel
+    low_scale = 1.0 - 0.12 * pucker - 0.08 * funnel
+
+    chunks: list = []
+
+    for x_off, z_off, front in _tooth_placements(up_scale):
+        # Each upper incisor: small flattened ellipsoid. The bite edge sits
+        # at -y relative to the tooth center; the gum end is at +y.
+        tooth_ry = length * (0.011 + 0.002 * front)
+        tooth_rx = length * (0.008 + 0.0015 * front)
+        tooth_rz = length * (0.008 + 0.002 * front)
+        chunks.append(prim.ellipsoid(
+            (x_off, up_y - tooth_ry * 0.55, up_z + z_off),
+            (tooth_rx, tooth_ry, tooth_rz),
+            head_idx, parent, rings=4, radial=8,
+        ))
+
+    for x_off, z_off, front in _tooth_placements(low_scale):
+        tooth_ry = length * (0.010 + 0.002 * front)
+        tooth_rx = length * (0.0075 + 0.0015 * front)
+        tooth_rz = length * (0.0075 + 0.002 * front)
+        chunks.append(prim.ellipsoid(
+            (x_off + lower_lateral, low_y + tooth_ry * 0.55,
+             low_z + z_off),
+            (tooth_rx, tooth_ry, tooth_rz),
+            head_idx, parent, rings=4, radial=8,
+        ))
+
+    if not chunks:
+        return _empty_mesh()
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_tongue(bones, shape=None, weights=None) -> SkinnedMesh:
+    """Tongue body visible behind the teeth on open vowels and lingual
+    consonants (L, TH, N, D, T).
+
+    Driven channels:
+      - ``jawOpen``    -> tongue descends and flattens along with the floor
+        of the mouth (it is anchored to the mandible hyoid anatomically,
+        which tracks the jaw).
+      - ``tongueOut``  -> tongue tip pushes forward past the incisal edge
+        (AU19 / Preston-Blair "L" and "TH" visemes).
+
+    The tongue is a single flattened ellipsoid: accurate enough to read
+    as volume behind the teeth without introducing a deformable mesh.
+    """
+    from . import face_anim as _fa
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, _head_w, head_d = info
+
+    jaw_open = _fa.w(weights, "jawOpen")
+    tongue_out = _fa.w(weights, "tongueOut")
+    mouth_close = _fa.w(weights, "mouthClose")
+
+    # Fully hide the tongue if the bite is closed -- it should never poke
+    # through sealed lips.
+    bite = max(0.0, jaw_open - 0.80 * mouth_close)
+    if bite < 0.03 and tongue_out < 0.02:
+        return _empty_mesh()
+
+    y_mouth = length * H_MOUTH
+    # Tongue sits on the floor of the mouth, just above the lower incisors.
+    cy = y_mouth - length * (0.018 + 0.022 * bite)
+    # Forward position: sits back from the bite line unless tongue_out is
+    # nonzero (the L/TH visemes push the tip to / past the incisal edge).
+    cz = head_d * (0.77 + 0.04 * tongue_out) - length * 0.004
+
+    rx = length * (0.036 + 0.003 * bite)
+    ry = length * (0.009 + 0.004 * bite)   # flatter when mouth is wide open
+    rz = length * (0.036 + 0.020 * tongue_out)
+
+    chunk = prim.ellipsoid(
+        (0.0, cy, cz), (rx, ry, rz),
+        head_idx, parent, rings=6, radial=14,
+    )
+    v, n, ba, bb, w, idx = chunk
+    v, n = v @ R.T, n @ R.T
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 

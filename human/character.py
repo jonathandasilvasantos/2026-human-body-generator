@@ -69,6 +69,11 @@ _EYE_WHITE:    Color = (0.93, 0.91, 0.87)  # warm off-white sclera
 _EYE_LIMBUS:   Color = (0.06, 0.05, 0.05)  # dark corneoscleral ring
 _EYE_CATCH:    Color = (1.00, 0.99, 0.96)  # near-white specular catchlight
 _MOUTH_DARK:   Color = (0.08, 0.035, 0.035)
+_TEETH_ENAMEL: Color = (0.90, 0.87, 0.80)   # warm off-white (human enamel
+                                            # sits near B1-C2 on the Vita
+                                            # shade guide; pure white reads
+                                            # synthetic under the skin shader)
+_TONGUE:       Color = (0.52, 0.22, 0.24)   # oxygenated muscle with mucosa
 
 
 # --- appearance --------------------------------------------------------------
@@ -449,6 +454,12 @@ class Character:
             app.skin_color, 0)
         add(mesh_mod.build_mouth_cavity(self.bones, self.shape, face_w),
             _MOUTH_DARK, 0)
+        # Teeth and tongue sit *between* the mouth cavity and the lips so
+        # the lip primitive occludes them when the mouth closes.
+        add(mesh_mod.build_teeth(self.bones, self.shape, face_w),
+            _TEETH_ENAMEL, 0)
+        add(mesh_mod.build_tongue(self.bones, self.shape, face_w),
+            _TONGUE, 0)
         add(mesh_mod.build_lips(self.bones, self.shape, face_w),
             app.lip_color, 0)
 
