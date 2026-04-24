@@ -355,9 +355,9 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         # depressed so it caps the armpit. R rotates it onto the actual
         # clavicle axis (lateral) before merging.
         Rc = mathx.align_y_to(c_tip_v)
-        ext_lat = c_len * 0.40 + radius_inflate * 0.7   # along clav (lateral)
-        ext_dn  = c_r * 1.4 + radius_inflate            # downward (axillary)
-        ext_fb  = c_r * 1.6 + radius_inflate            # front-back
+        ext_lat = c_len * 0.48 + radius_inflate * 0.7   # along clav (lateral)
+        ext_dn  = c_r * 2.1 + radius_inflate            # downward (axillary)
+        ext_fb  = c_r * 1.9 + radius_inflate            # front-back
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, c_len * 0.85, -c_r * 0.4),
             (ext_dn, ext_lat, ext_fb),
