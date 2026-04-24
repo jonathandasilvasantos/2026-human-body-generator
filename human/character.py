@@ -201,7 +201,7 @@ def random_appearance(gender: str) -> Appearance:
         facial_hair_color=facial_hair_color,
         top_style=top_style,
         top_color=top_color,
-        top_inflate=random.uniform(0.008, 0.014),
+        top_inflate=random.uniform(0.014, 0.020),
         top_length_scale=random.uniform(1.00, 1.05),
         bottom_style=bottom_style,
         bottom_color=bottom_color,
