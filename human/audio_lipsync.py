@@ -93,32 +93,34 @@ def _frames(samples: np.ndarray, sr: int) -> List[Frame]:
     # Hann window reduces spectral leakage.
     window = 0.5 - 0.5 * np.cos(2.0 * math.pi * np.arange(win) / max(1, win - 1))
     freqs = np.fft.rfftfreq(win, d=1.0 / sr)
-    lf = freqs < 1000.0
-    mf = (freqs >= 1000.0) & (freqs < 3000.0)
+    # Vowel band split chosen against English F1/F2 ranges (Peterson &
+    # Barney 1952): F1 typically 250-800 Hz (open vs close), F2 typically
+    # 800-2700 Hz (back vs front). Above 3 kHz is essentially fricative
+    # territory.
+    lf = freqs < 800.0
+    mf = (freqs >= 800.0) & (freqs < 3000.0)
     hf = freqs >= 3000.0
 
     out: List[Frame] = []
-    # Pre-emphasis (classic speech front-end) boosts high frequencies so
-    # fricatives are not buried under voiced energy.
-    pre = np.empty_like(samples)
-    pre[0] = samples[0]
-    pre[1:] = samples[1:] - 0.97 * samples[:-1]
-
+    # Spectral features are computed on the RAW signal. Pre-emphasis
+    # (0.97 first-order HP) is a useful robustification for MFCC-style
+    # pipelines but here it biases lf/mf/hf ratios toward HF, distorting
+    # the vowel classifier. Fricative detection leans on ZCR instead.
     n = len(samples)
     i = 0
     while i + win <= n:
-        seg = pre[i:i + win]
-        # RMS on the *original* signal (pre-emphasis inflates HF RMS).
         raw = samples[i:i + win]
         rms = float(np.sqrt(np.mean(raw * raw) + 1e-12))
         dbfs = 20.0 * math.log10(max(rms, 1e-6))
-        spec = np.abs(np.fft.rfft(seg * window)) + 1e-9
+        spec = np.abs(np.fft.rfft(raw * window)) + 1e-9
         total = float(spec.sum())
         lf_e = float(spec[lf].sum()) / total
         mf_e = float(spec[mf].sum()) / total
         hf_e = float(spec[hf].sum()) / total
         centroid = float((freqs * spec).sum() / total)
         # Zero crossings on the raw segment -- fricatives have high ZCR.
+        # Normalised by sample rate so the feature is sample-rate-
+        # independent (zc-per-second / sr).
         zc = int(np.sum(np.abs(np.diff(np.signbit(raw).astype(np.int8)))))
         zcr = zc / float(len(raw))
         out.append(Frame(
@@ -134,39 +136,86 @@ def _frames(samples: np.ndarray, sr: int) -> List[Frame]:
 
 # --- viseme classification --------------------------------------------------
 
-def _classify(f: Frame) -> str:
-    """Map a single analysis frame to one of the Preston-Blair visemes.
+@dataclass
+class _ClipStats:
+    """Per-clip reference percentiles used for adaptive thresholds.
 
-    Decision tree tuned for English speech at conversational loudness.
-    Coarticulation is left to ``face_anim.VisemeTrack`` (Cohen-Massaro).
+    Absolute lf/mf/hf ratios vary wildly with microphone, room tone,
+    speaker gender and noise. A vowel that would show lf=0.8 on a lo-fi
+    telephone recording might only reach lf=0.4 on a crisp condenser.
+    We anchor thresholds to within-clip quantiles of the active frames
+    so the classifier adapts to each recording's spectral baseline.
+    """
+    centroid_lo: float
+    centroid_hi: float
+    lf_hi: float
+    hf_hi: float
+    zcr_hi: float
+
+
+def _clip_stats(frames: List[Frame]) -> _ClipStats:
+    active = [f for f in frames if f.dbfs >= SIL_DBFS]
+    if not active:
+        return _ClipStats(1500.0, 3000.0, 0.4, 0.5, 0.10)
+    c = np.array([f.centroid for f in active])
+    lf = np.array([f.lf_ratio for f in active])
+    hf = np.array([f.hf_ratio for f in active])
+    zc = np.array([f.zcr for f in active])
+    return _ClipStats(
+        centroid_lo=float(np.percentile(c, 30)),
+        centroid_hi=float(np.percentile(c, 75)),
+        lf_hi=float(np.percentile(lf, 70)),
+        hf_hi=float(np.percentile(hf, 70)),
+        zcr_hi=float(np.percentile(zc, 75)),
+    )
+
+
+def _classify(f: Frame, st: _ClipStats) -> str:
+    """Map one analysis frame to a Preston-Blair viseme using per-clip
+    adaptive thresholds.
+
+    Decision order (most discriminative first):
+      1. silence
+      2. fricative family (high ZCR relative to clip baseline)
+      3. rounded back vowels (low centroid + high LF concentration)
+      4. open front vowel (mid-high centroid + decent loudness)
+      5. mid front vowel E (falls out of the remaining mid band)
+      6. catch-all 'etc' (unvoiced release / K/G/H/schwa)
+
+    Coarticulation smoothing is left to ``face_anim.VisemeTrack``.
     """
     if f.dbfs < SIL_DBFS:
         return "sil"
 
-    # Unvoiced / fricative family: lots of HF energy, high ZCR, low-ish RMS.
-    if f.hf_ratio > HF_RATIO_FRIC and f.zcr > 0.12:
-        # Sibilants (/s z ʃ ʒ tʃ dʒ/) sit high; /f v θ ð/ sit lower.
-        if f.centroid > 4200.0:
-            return "S"
-        if f.centroid > 2800.0:
-            return "TH"
-        return "FV"
+    # Fricative family: ZCR spikes for unvoiced turbulence. Use the
+    # clip's own ZCR distribution so we stay calibrated across mic/room.
+    if f.zcr > max(0.05, st.zcr_hi) and f.hf_ratio > st.hf_hi * 0.85:
+        if f.centroid > 5500.0 or f.zcr > max(0.12, st.zcr_hi * 1.6):
+            return "S"       # /s z ʃ ʒ tʃ dʒ/
+        if f.centroid > 3500.0:
+            return "TH"      # /θ ð/
+        return "FV"          # /f v/
 
-    # Voiced region: pick a vowel by where the spectral mass sits.
-    # Acoustic phonetics (Peterson & Barney 1952): low F1 = close vowel;
-    # high F2 = front vowel. We approximate F1 by LF ratio and F2 by
-    # centroid, which is crude but enough to separate the four corners.
-    if f.lf_ratio > 0.78 and f.centroid < 900.0:
-        # Very low spectrum: rounded close back vowel.
+    # Rounded close back: LF mass concentrated, centroid very low.
+    if f.lf_ratio > st.lf_hi and f.centroid < st.centroid_lo:
         return "U" if f.dbfs < -22.0 else "O"
-    if f.lf_ratio > 0.62 and f.centroid < 1400.0:
-        # Mostly low with some mid: open/near-open back.
-        return "O" if f.dbfs > -25.0 else "AI"
-    if f.mf_ratio > 0.28 and f.centroid > 1600.0:
-        # Strong mid / high centroid: front vowel.
+
+    # Open back (AI / "father"): moderate LF, moderate centroid, strong
+    # loudness. High-energy vowels with centroid in the lower half of
+    # the clip's range read as open.
+    if f.centroid < st.centroid_lo * 1.1 and f.dbfs > SIL_DBFS + 8.0:
+        return "AI"
+
+    # Front vowel E: centroid in upper band, LF is subdued.
+    if f.centroid > st.centroid_hi * 0.9 and f.lf_ratio < st.lf_hi:
         return "E"
-    # Default open vowel -- carries most of the energy of casual speech.
-    return "AI"
+
+    # Mid / near-open / schwa / consonant release.
+    if f.dbfs < SIL_DBFS + 10.0:
+        # Quiet but not silent: closing plosives / mumbles -- read as MBP
+        # transit (lips together) if surrounded by speech.
+        return "etc"
+    return "AI" if f.lf_ratio > st.lf_hi * 0.8 else "E"
 
 
 def _compact(frames: List[Frame], labels: List[str],
@@ -277,7 +326,8 @@ def from_wav(path: str) -> LipsyncTrack:
     if samples.size == 0:
         raise ValueError(f"empty audio: {path}")
     frames = _frames(samples, sr)
-    labels = [_classify(f) for f in frames]
+    stats = _clip_stats(frames)
+    labels = [_classify(f, stats) for f in frames]
     segs = _compact(frames, labels)
     track = face_anim.VisemeTrack(segs)
     times = np.array([f.t for f in frames], dtype=np.float32)
