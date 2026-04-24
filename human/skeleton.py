@@ -78,14 +78,32 @@ class Shape:
     head_size: float = 1.0
     leg_len: float = 1.0
     torso_len: float = 1.0
+    # Sex-dimorphism knobs (added in the anatomy-dimorphism cycle):
+    # waist     -- multiplier on spine radius and chest bottom-cap. <1 cinches
+    #              the waistline (female), 1.0 keeps the cylinder (male).
+    # lower_bulk - independent bulk multiplier for hips/thighs/glutes so the
+    #              gynoid pear silhouette is decoupled from upper-body bulk.
+    # neck_thick - multiplier on neck radius (male thicker, female slimmer).
+    # bust_proj  - 0..1 forward-projection multiplier for the bust ellipsoid.
+    # q_angle    - radians; female pelvis is wider so femurs angle inward
+    #              toward the knee. Applied as an outward shift of thigh head
+    #              and an inward bias of thigh tip in apply_shape.
+    waist: float = 1.0
+    lower_bulk: float = 1.0
+    neck_thick: float = 1.0
+    bust_proj: float = 0.6
+    q_angle: float = 0.0
 
 
 # Per-bone shape rules: which shape knobs scale the head/tip offsets and
 # radius for each named bone. Keeps ``apply_shape`` declarative.
 _SHAPE_RULES = {
-    "spine":   dict(head=("1", "torso_len", "1"), tip=("1", "torso_len", "1"), r="bulk"),
+    # Spine carries the waist cinch -- its radius is `bulk * waist`. The
+    # chest stays at full bulk so the upper torso reads as broader than
+    # the waist (the V on males, the hourglass on females).
+    "spine":   dict(head=("1", "torso_len", "1"), tip=("1", "torso_len", "1"), r="bulk*waist"),
     "chest":   dict(head=("1", "torso_len", "1"), tip=("1", "torso_len", "1"), r="bulk"),
-    "neck":    dict(head=("1", "torso_len", "1"), tip=("1", "1", "1"),         r="bulk*0.9"),
+    "neck":    dict(head=("1", "torso_len", "1"), tip=("1", "1", "1"),         r="bulk*0.9*neck_thick"),
     "head":    dict(head=("1", "1", "1"),         tip=("head_size",) * 3,      r="head_size"),
 
     "clav_L":  dict(head=("shoulder_w", "1", "1"), tip=("shoulder_w", "1", "1"), r="bulk"),
@@ -97,11 +115,15 @@ _SHAPE_RULES = {
     "hand_L":  dict(head=("1", "limb_len", "1"),   tip=("1", "1", "1"),          r="bulk"),
     "hand_R":  dict(head=("1", "limb_len", "1"),   tip=("1", "1", "1"),          r="bulk"),
 
-    "thigh_L": dict(head=("hip_w", "1", "1"),  tip=("1", "leg_len", "1"), r="bulk"),
-    "thigh_R": dict(head=("hip_w", "1", "1"),  tip=("1", "leg_len", "1"), r="bulk"),
-    "pelvis":  dict(head=("1", "1", "1"),      tip=("1", "1", "1"),       r="bulk*((hip_w+1.0)*0.5)"),
-    "shin_L":  dict(head=("1", "leg_len", "1"),tip=("1", "leg_len", "1"), r="bulk"),
-    "shin_R":  dict(head=("1", "leg_len", "1"),tip=("1", "leg_len", "1"), r="bulk"),
+    # Lower body uses lower_bulk so hips/thighs can carry more volume than
+    # the upper body (gynoid distribution). Pelvis radius keys off both
+    # hip_w and lower_bulk so a wide-hipped soft body reads as such.
+    "thigh_L": dict(head=("hip_w", "1", "1"),  tip=("1", "leg_len", "1"), r="bulk*lower_bulk"),
+    "thigh_R": dict(head=("hip_w", "1", "1"),  tip=("1", "leg_len", "1"), r="bulk*lower_bulk"),
+    "pelvis":  dict(head=("1", "1", "1"),      tip=("1", "1", "1"),
+                    r="bulk*lower_bulk*((hip_w+1.0)*0.5)"),
+    "shin_L":  dict(head=("1", "leg_len", "1"),tip=("1", "leg_len", "1"), r="bulk*lower_bulk"),
+    "shin_R":  dict(head=("1", "leg_len", "1"),tip=("1", "leg_len", "1"), r="bulk*lower_bulk"),
     "foot_L":  dict(head=("1", "leg_len", "1"),tip=("1", "1", "1"),       r="bulk"),
     "foot_R":  dict(head=("1", "leg_len", "1"),tip=("1", "1", "1"),       r="bulk"),
 }
@@ -117,6 +139,12 @@ def _eval(expr: str, shape: Shape) -> float:
 def apply_shape(bones_base: List[Bone], shape: Shape) -> List[Bone]:
     """Return a shape-morphed copy of the bone list."""
     out = []
+    q = float(getattr(shape, "q_angle", 0.0))
+    # Q-angle implementation: female pelvis is wider than the knees, so the
+    # femur tracks inward. We simulate this geometrically: shift the thigh
+    # head outward (already done by hip_w) and shift the thigh tip slightly
+    # inward by `q * thigh_length` so the knee sits more medial than the
+    # hip socket. q is small (~0.10 = ~6deg) for typical female shapes.
     for (name, parent, head, tip, r) in bones_base:
         rule = _SHAPE_RULES.get(name)
         if rule is None:
@@ -132,10 +160,20 @@ def apply_shape(bones_base: List[Bone], shape: Shape) -> List[Bone]:
         head_s = (head_s[0], head_s[1] * shape.height, head_s[2])
         tip_s = (tip_s[0], tip_s[1] * shape.height, tip_s[2])
 
+        new_head = list(v * head_s[i] for i, v in enumerate(head))
+        new_tip = list(v * tip_s[i] for i, v in enumerate(tip))
+
+        if q > 1e-4 and name in ("thigh_L", "thigh_R"):
+            # Tip is local to the bone (which sits at the hip head). Pull
+            # the knee toward the body midline by q * abs(thigh_length).
+            sign = +1.0 if name.endswith("_L") else -1.0
+            inward = -sign * q * abs(new_tip[1])
+            new_tip[0] += inward
+
         out.append((
             name, parent,
-            tuple(v * head_s[i] for i, v in enumerate(head)),
-            tuple(v * tip_s[i] for i, v in enumerate(tip)),
+            tuple(new_head),
+            tuple(new_tip),
             r * r_s,
         ))
     return out
@@ -426,32 +464,50 @@ def random_shape(gender: str | None = None) -> Shape:
         gender = random.choice(["male", "female"])
 
     if gender == "male":
-        shoulder_w = random.uniform(0.98, 1.14)
-        hip_w      = random.uniform(0.88, 1.02)
+        shoulder_w = random.uniform(1.04, 1.20)   # broader shoulders
+        hip_w      = random.uniform(0.86, 0.98)   # narrower hips
         bust       = 0.0
         height     = random.uniform(0.98, 1.12)
         bulk       = random.uniform(0.94, 1.20)
         torso_len  = random.uniform(0.96, 1.08)
         leg_len    = random.uniform(0.96, 1.10)
         head_size  = random.uniform(1.00, 1.10)
+        # Male waist is close to the chest width (android distribution):
+        # taper just slightly so the silhouette is still V-shaped.
+        waist      = random.uniform(0.88, 0.96)
+        lower_bulk = random.uniform(0.95, 1.05)   # legs roughly track torso
+        neck_thick = random.uniform(1.02, 1.14)   # thicker neck
+        bust_proj  = 0.0
+        q_angle    = random.uniform(0.00, 0.04)   # near-zero (M ~ 11 deg)
     elif gender == "female":
-        shoulder_w = random.uniform(0.84, 0.98)
-        hip_w      = random.uniform(0.98, 1.16)
-        bust       = random.uniform(0.30, 0.95)
+        shoulder_w = random.uniform(0.82, 0.94)   # narrower shoulders
+        hip_w      = random.uniform(1.02, 1.14)   # broader hips
+        bust       = random.uniform(0.45, 1.05)
         height     = random.uniform(0.90, 1.04)
-        bulk       = random.uniform(0.80, 1.02)
+        bulk       = random.uniform(0.78, 0.98)
         torso_len  = random.uniform(0.94, 1.06)
         leg_len    = random.uniform(0.94, 1.10)
-        head_size  = random.uniform(0.98, 1.08)
+        head_size  = random.uniform(0.94, 1.04)
+        # Strong waist cinch, fuller lower body for the gynoid silhouette.
+        waist      = random.uniform(0.78, 0.88)
+        lower_bulk = random.uniform(1.04, 1.14)
+        neck_thick = random.uniform(0.78, 0.92)
+        bust_proj  = random.uniform(0.55, 0.95)
+        q_angle    = random.uniform(0.10, 0.18)   # ~6-10 deg medial knee
     else:
-        shoulder_w = random.uniform(0.90, 1.08)
-        hip_w      = random.uniform(0.92, 1.10)
+        shoulder_w = random.uniform(0.94, 1.10)
+        hip_w      = random.uniform(0.94, 1.10)
         bust       = 0.0
         height     = random.uniform(0.94, 1.08)
         bulk       = random.uniform(0.86, 1.10)
         torso_len  = random.uniform(0.94, 1.08)
         leg_len    = random.uniform(0.94, 1.10)
         head_size  = random.uniform(0.98, 1.10)
+        waist      = random.uniform(0.88, 1.00)
+        lower_bulk = random.uniform(0.95, 1.08)
+        neck_thick = random.uniform(0.92, 1.06)
+        bust_proj  = 0.0
+        q_angle    = random.uniform(0.02, 0.08)
 
     return Shape(
         gender=gender,
@@ -464,4 +520,9 @@ def random_shape(gender: str | None = None) -> Shape:
         head_size=head_size,
         leg_len=leg_len,
         torso_len=torso_len,
+        waist=waist,
+        lower_bulk=lower_bulk,
+        neck_thick=neck_thick,
+        bust_proj=bust_proj,
+        q_angle=q_angle,
     )
