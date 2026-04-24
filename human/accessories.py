@@ -282,52 +282,94 @@ def build_facial_hair(bones, style: str) -> SkinnedMesh:
 
     chunks = []
 
-    # Mustache — a single thin strip just above the upper lip.
+    # Mustache — a thin strip above the upper lip, split into three segments
+    # (center + two drooping outer wings) so it follows the vermillion arc
+    # and droops slightly under gravity instead of reading as a flat bar.
     if style in ("mustache", "full"):
-        z = head_d * 0.90
-        y = length * (H_MOUTH + 0.025)
+        z_mid = head_d * 0.92
+        z_side = head_d * 0.84
+        y_mid = length * (H_MOUTH + 0.026)
+        y_side = length * (H_MOUTH + 0.010)  # droop at corners
         chunks.append(prim.flat_patch(
-            (0.0, y, z),
-            (length * 0.075, length * 0.010),
-            head_idx, parent, normal=(0, 0, 1),
-            subdiv=(7, 2), thickness=0.002,
+            (0.0, y_mid, z_mid),
+            (length * 0.040, length * 0.010),
+            head_idx, parent, normal=(0, 0.10, 1),
+            subdiv=(6, 2), thickness=0.0014,
         ))
+        for sx in (+1.0, -1.0):
+            chunks.append(prim.flat_patch(
+                (sx * length * 0.050, y_side, z_side),
+                (length * 0.030, length * 0.0085),
+                head_idx, parent,
+                normal=(sx * 0.22, -0.18, 1.0),
+                subdiv=(5, 2), thickness=0.0013,
+            ))
 
-    # Soul patch / goatee — small patch just below the lower lip.
+    # Soul patch / goatee — small patch just below the lower lip, plus a
+    # narrower chin-tip accent so the goatee has shape rather than being a
+    # single rectangular blob.
     if style in ("goatee", "full"):
         chunks.append(prim.flat_patch(
-            (0.0, length * (H_CHIN + 0.08), head_d * 0.80),
-            (length * 0.040, length * 0.035),
-            head_idx, parent, normal=(0, 0, 1),
-            subdiv=(4, 3), thickness=0.002,
+            (0.0, length * (H_CHIN + 0.085), head_d * 0.80),
+            (length * 0.036, length * 0.028),
+            head_idx, parent, normal=(0, -0.08, 1.0),
+            subdiv=(5, 3), thickness=0.0015,
+        ))
+        chunks.append(prim.flat_patch(
+            (0.0, length * (H_CHIN + 0.035), head_d * 0.75),
+            (length * 0.024, length * 0.018),
+            head_idx, parent, normal=(0, -0.25, 1.0),
+            subdiv=(4, 2), thickness=0.0013,
         ))
 
-    # Full beard / stubble — subtle patches on the jawline and chin.
-    # Small, thin, positioned well below the mouth so they read as
-    # shadow/stubble rather than a second pair of lips.
+    # Full beard / stubble — coverage across jawline, cheek edges and chin
+    # with feathered edges. Thickness is deliberately very small so every
+    # patch reads as a shadow region, not a raised lump.
     if style in ("stubble", "full"):
-        jaw_y  = length * (H_CHIN + 0.10)     # between chin and mouth
-        chin_y = length * (H_CHIN + 0.03)     # right at the chin line
-        chunks += [
-            prim.flat_patch(
-                (+head_w * 0.55, jaw_y, head_d * 0.62),
-                (length * 0.035, length * 0.040),
-                head_idx, parent, normal=(0.3, -0.2, 0.95),
-                subdiv=(3, 3), thickness=0.0015,
-            ),
-            prim.flat_patch(
-                (-head_w * 0.55, jaw_y, head_d * 0.62),
-                (length * 0.035, length * 0.040),
-                head_idx, parent, normal=(-0.3, -0.2, 0.95),
-                subdiv=(3, 3), thickness=0.0015,
-            ),
-        ]
+        jaw_y  = length * (H_CHIN + 0.10)
+        chin_y = length * (H_CHIN + 0.03)
+        cheek_y = length * (H_CHIN + 0.17)
+        # Jaw/cheek pair (left and right).
+        for sx in (+1.0, -1.0):
+            chunks.append(prim.flat_patch(
+                (sx * head_w * 0.55, jaw_y, head_d * 0.62),
+                (length * 0.038, length * 0.042),
+                head_idx, parent,
+                normal=(sx * 0.30, -0.20, 0.95),
+                subdiv=(4, 4), thickness=0.0012,
+            ))
+            # Upper cheek feather: smaller, fades toward the sideburn.
+            chunks.append(prim.flat_patch(
+                (sx * head_w * 0.62, cheek_y, head_d * 0.50),
+                (length * 0.022, length * 0.030),
+                head_idx, parent,
+                normal=(sx * 0.55, -0.05, 0.82),
+                subdiv=(3, 3), thickness=0.0010,
+            ))
+            # Lower jaw wrap toward chin.
+            chunks.append(prim.flat_patch(
+                (sx * head_w * 0.32, chin_y, head_d * 0.72),
+                (length * 0.028, length * 0.022),
+                head_idx, parent,
+                normal=(sx * 0.18, -0.30, 0.94),
+                subdiv=(3, 2), thickness=0.0010,
+            ))
+        # Central chin patch (under-lip shadow absent for stubble).
         chunks.append(prim.flat_patch(
             (0.0, chin_y, head_d * 0.70),
-            (length * 0.055, length * 0.025),
-            head_idx, parent, normal=(0, -0.3, 0.95),
-            subdiv=(5, 2), thickness=0.0015,
+            (length * 0.050, length * 0.024),
+            head_idx, parent, normal=(0, -0.30, 0.95),
+            subdiv=(5, 2), thickness=0.0012,
         ))
+        # Thin throat-line patch below chin (a subtle neck-beard shadow
+        # on the 'full' style; keep it short so it doesn't read as fabric).
+        if style == "full":
+            chunks.append(prim.flat_patch(
+                (0.0, length * (H_CHIN - 0.05), head_d * 0.55),
+                (length * 0.060, length * 0.025),
+                head_idx, parent, normal=(0, -0.6, 0.8),
+                subdiv=(5, 2), thickness=0.0012,
+            ))
 
     if not chunks:
         return _empty_mesh()
