@@ -509,7 +509,8 @@ class Character:
     # ---- render helpers ---------------------------------------------------
 
     def bone_matrices(self) -> np.ndarray:
-        return skeleton.compute_bone_matrices(self.bones, self.pose, self.root_offset)
+        pose = skeleton.derive_cloth_pose(self.bones, self.pose)
+        return skeleton.compute_bone_matrices(self.bones, pose, self.root_offset)
 
     def skeleton_line_points(self, bone_mats: np.ndarray) -> np.ndarray:
         pts = np.empty((len(self.bones) * 2, 3), dtype=np.float32)

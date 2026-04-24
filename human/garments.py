@@ -199,6 +199,8 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
     thigh_idx = _find(bones, "thigh_L")
     if pelvis_idx < 0 or thigh_idx < 0:
         return _empty_mesh()
+    skirt_l_idx = _find(bones, "skirt_L")
+    skirt_r_idx = _find(bones, "skirt_R")
 
     _, _, _, pelvis_tip, pelvis_r = bones[pelvis_idx]
     _, _, thigh_head, thigh_tip, _ = bones[thigh_idx]
@@ -216,14 +218,27 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
     band_h = min(0.018, max(0.010, thigh_len * 0.035))
     hem_y = top_center[1] - total_drop
 
-    chunks = [prim.cone_shell(
-        top_center, top_radius,
-        height=total_drop,
-        bottom_radius=bottom_radius,
-        bone_index=pelvis_idx,
-        parent_index=-1,
-        rings=8, radial=28,
-    )]
+    if skirt_l_idx >= 0 and skirt_r_idx >= 0:
+        cone = prim.cone_shell_leg_blend(
+            top_center, top_radius,
+            height=total_drop,
+            bottom_radius=bottom_radius,
+            pelvis_index=pelvis_idx,
+            left_skirt_index=skirt_l_idx,
+            right_skirt_index=skirt_r_idx,
+            rings=10, radial=28,
+            max_leg_weight=0.55,
+        )
+    else:
+        cone = prim.cone_shell(
+            top_center, top_radius,
+            height=total_drop,
+            bottom_radius=bottom_radius,
+            bone_index=pelvis_idx,
+            parent_index=-1,
+            rings=8, radial=28,
+        )
+    chunks = [cone]
     # Raised waistband and hem add pattern-like garment boundaries and make
     # the otherwise infinitely thin cone shell read as constructed cloth.
     chunks.append(prim.cone_shell(
@@ -269,6 +284,8 @@ def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
     thigh_idx = mesh_mod._find(bones, "thigh_L")
     if pelvis_idx < 0 or thigh_idx < 0:
         return upper
+    skirt_l_idx = mesh_mod._find(bones, "skirt_L")
+    skirt_r_idx = mesh_mod._find(bones, "skirt_R")
     pelvis_r = bones[pelvis_idx][4]
     thigh_tip = bones[thigh_idx][3]
     thigh_len = float(np.linalg.norm(np.asarray(thigh_tip, dtype=np.float32)))
@@ -282,12 +299,23 @@ def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
 
     band_h = min(0.020, max(0.011, thigh_len * 0.035))
     hem_y = waist_y - hem_drop
-    cone = prim.cone_shell(
-        (0.0, waist_y, 0.0), waist_r,
-        height=hem_drop, bottom_radius=hem_r,
-        bone_index=pelvis_idx, parent_index=-1,
-        rings=10, radial=28,
-    )
+    if skirt_l_idx >= 0 and skirt_r_idx >= 0:
+        cone = prim.cone_shell_leg_blend(
+            (0.0, waist_y, 0.0), waist_r,
+            height=hem_drop, bottom_radius=hem_r,
+            pelvis_index=pelvis_idx,
+            left_skirt_index=skirt_l_idx,
+            right_skirt_index=skirt_r_idx,
+            rings=12, radial=28,
+            max_leg_weight=0.50,
+        )
+    else:
+        cone = prim.cone_shell(
+            (0.0, waist_y, 0.0), waist_r,
+            height=hem_drop, bottom_radius=hem_r,
+            bone_index=pelvis_idx, parent_index=-1,
+            rings=10, radial=28,
+        )
     lower = _mesh_from_chunks([
         cone,
         prim.cone_shell(
