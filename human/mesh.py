@@ -567,6 +567,55 @@ def build_pupils(bones) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
+def build_eyelids(bones) -> SkinnedMesh:
+    """Skin-colored upper/lower eyelid folds that mask the spherical eyeballs.
+
+    This keeps the existing simple eye spheres, but exposes them through a
+    narrower almond aperture instead of showing full round balls.
+    """
+    info = _head_info(bones)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, r, head_w, head_d = info
+    sep = length * 0.115
+    y = length * H_EYE
+    z = head_d * 0.78
+    eye_r = length * 0.060
+
+    # Slightly in front of the sclera/iris so depth testing naturally hides
+    # the upper/lower poles of the eye sphere.
+    lid_z = z + eye_r * 0.92
+    hx = length * 0.070
+    upper_hy = length * 0.016
+    lower_hy = length * 0.010
+    upper_y = y + eye_r * 0.64
+    lower_y = y - eye_r * 0.58
+
+    chunks = []
+    for side in (+1.0, -1.0):
+        x = side * sep
+        chunks.append(prim.flat_patch(
+            (x, upper_y, lid_z),
+            (hx, upper_hy),
+            head_idx, parent,
+            normal=(0.0, 0.10, 1.0),
+            subdiv=(8, 2),
+            thickness=0.0025,
+        ))
+        chunks.append(prim.flat_patch(
+            (x, lower_y, lid_z - eye_r * 0.04),
+            (hx * 0.92, lower_hy),
+            head_idx, parent,
+            normal=(0.0, -0.08, 1.0),
+            subdiv=(8, 2),
+            thickness=0.002,
+        ))
+
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
 def build_lips(bones) -> SkinnedMesh:
     """Upper + lower lip as two thin squashed ellipsoids on the face."""
     info = _head_info(bones)

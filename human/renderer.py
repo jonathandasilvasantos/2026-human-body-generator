@@ -37,7 +37,7 @@ in vec3 v_pos;
 out vec4 frag;
 
 uniform vec3  u_color;
-uniform int   u_mode;   // 0 = skin, 1 = fabric
+uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye
 uniform float u_seed;   // per-character random seed in [0,1]
 
 // cheap 3D hash -> [0,1]
@@ -112,13 +112,19 @@ void main() {
         albedo *= 0.94 + 0.08 * weave;
         float lint = fbm(sample_p * 22.0);
         albedo *= 0.96 + 0.07 * lint;
-    } else {
+    } else if (u_mode == 2) {
         // HAIR: strongly anisotropic fBm -- long wavelength along the head's
         // vertical axis, short across it -> reads as vertical strands.
         float strand = fbm(sample_p * vec3(55.0, 8.0, 55.0));
         albedo *= 0.75 + 0.30 * strand;
         float fine = fbm(sample_p * vec3(180.0, 30.0, 180.0));
         albedo *= 0.92 + 0.14 * fine;
+    } else {
+        // EYES: keep sclera/iris/pupil out of the skin pigmentation path.
+        // The eye surface needs clean wet specular response, not pores or
+        // melanin/hemoglobin mottling.
+        float limbal = smoothstep(0.35, 0.95, fbm(sample_p * 18.0));
+        albedo *= 0.97 + 0.04 * limbal;
     }
 
     vec3 L1 = normalize(vec3(0.4, 0.8, 0.6));
@@ -128,17 +134,19 @@ void main() {
             + 0.20;
     vec3 c = albedo * d;
 
-    // Blinn-Phong specular: meaningful only on skin + eyes (mode 0). Fabric
-    // stays matte; hair gets a very soft anisotropic band elsewhere.
-    if (u_mode == 0) {
+    // Blinn-Phong specular: skin has a soft oil highlight; eyes use a tighter
+    // wet highlight. Fabric stays matte.
+    if (u_mode == 0 || u_mode == 3) {
         vec3 V = normalize(-v_pos);
         vec3 H = normalize(L1 + V);
-        float spec = pow(max(dot(n, H), 0.0), 40.0);
-        c += 0.09 * spec * vec3(1.0, 0.97, 0.93);
+        float gloss = (u_mode == 3) ? 96.0 : 40.0;
+        float strength = (u_mode == 3) ? 0.20 : 0.09;
+        float spec = pow(max(dot(n, H), 0.0), gloss);
+        c += strength * spec * vec3(1.0, 0.97, 0.93);
     }
 
     float rim = pow(1.0 - max(dot(n, normalize(-v_pos)), 0.0), 3.0);
-    float rim_k = (u_mode == 0) ? 0.15 : ((u_mode == 2) ? 0.10 : 0.05);
+    float rim_k = (u_mode == 0) ? 0.15 : ((u_mode == 2) ? 0.10 : ((u_mode == 3) ? 0.06 : 0.05));
     c += rim_k * rim * vec3(1.0, 0.85, 0.7);
     frag = vec4(c, 1.0);
 }

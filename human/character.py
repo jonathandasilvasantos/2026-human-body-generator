@@ -3,7 +3,7 @@ drawables that make up the renderable body (skin, eyes, hair, clothes...).
 
 A single ``Character`` owns a list of :class:`Drawable` entries. Each is a
 GPU mesh paired with a solid base color and a shader mode (0=skin, 1=fabric,
-2=hair). The viewer just iterates the list.
+2=hair, 3=eye). The viewer just iterates the list.
 """
 
 import random
@@ -26,7 +26,7 @@ Color = Tuple[float, float, float]
 class Drawable:
     mesh_gpu: renderer.MeshGPU
     color: Color
-    mode: int  # 0=skin, 1=fabric, 2=hair
+    mode: int  # 0=skin, 1=fabric, 2=hair, 3=eye
 
 
 # --- palettes ----------------------------------------------------------------
@@ -248,10 +248,11 @@ class Character:
         # body skin (body + head compound + bust + glutes handled by build())
         add(mesh_mod.build(self.bones, self.shape), app.skin_color, 0)
 
-        # eyes (whites + iris + pupil) and lips
-        add(mesh_mod.build_eyes(self.bones),   _EYE_WHITE,      0)
-        add(mesh_mod.build_iris(self.bones),   app.eye_color,   0)
-        add(mesh_mod.build_pupils(self.bones), app.pupil_color, 0)
+        # eyes (whites + iris + pupil), anatomical eyelid occlusion, and lips
+        add(mesh_mod.build_eyes(self.bones),    _EYE_WHITE,      3)
+        add(mesh_mod.build_iris(self.bones),    app.eye_color,   3)
+        add(mesh_mod.build_pupils(self.bones),  app.pupil_color, 3)
+        add(mesh_mod.build_eyelids(self.bones), app.skin_color,  0)
         add(mesh_mod.build_lips(self.bones),   app.lip_color,   0)
 
         # hair + eyebrows
