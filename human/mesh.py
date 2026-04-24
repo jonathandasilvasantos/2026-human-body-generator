@@ -192,15 +192,70 @@ def _profiled_capsule(bone_index, parent_index, length, radius, profile,
     )
 
 
-def _limb_profile(name):
-    """Return a radius profile for exposed anatomical skin limbs."""
+def _torso_profile(name, shape):
+    """Per-bone radial taper for torso bones so the chest -> waist ->
+    pelvis transition is continuous.
+
+    The chest bone tapers from full radius at the top down to roughly the
+    waist radius (`shape.waist`) at the bottom; the spine bone holds at
+    the waist radius then opens up at the pelvis. Without this profile the
+    cylindrical chest mesh ended at full chest radius and the narrow spine
+    started immediately after, producing a visible step / "skirt" ring at
+    the chest bottom whenever waist < 1.
+    """
+    if shape is None:
+        return None
+    waist = float(getattr(shape, "waist", 1.0))
+    if name == "chest":
+        # Smoothly taper from r at t=0 to ~waist at t=1.
+        return lambda t, w=waist: 1.0 - (1.0 - w) * t
+    if name == "spine":
+        # Narrow at top (waist), open up slightly at the bottom toward the
+        # pelvis so the join with the pelvis cap is continuous.
+        # spine radius is already `bulk*waist`; profile divides BACK out to
+        # land at ~bulk by t=1.
+        if waist < 1e-3:
+            return None
+        return lambda t, w=waist: 1.0 + ((1.0 / w) - 1.0) * t
+    return None
+
+
+def _limb_profile(name, gender="neutral"):
+    """Return a radius profile for exposed anatomical skin limbs.
+
+    Profiles encode the *anatomical* radius taper from limb head -> tip
+    (t in [0,1]). Sex differences:
+      * Male upper-arm and calf carry a stronger muscle belly bulge
+        (deltoid+biceps; gastrocnemius) that we model via a larger sin
+        amplitude in the middle of the bone.
+      * Female thighs taper LESS toward the knee (subcutaneous fat on
+        the quads/inner thigh). Female forearms are slightly thinner.
+    """
+    male = (gender == "male")
+    female = (gender == "female")
     if name.startswith("uarm_"):
-        return lambda t: 1.00 - 0.22 * t + 0.04 * math.sin(math.pi * t)
+        # Mid-bone sin bulge: bigger for males (biceps/triceps mass).
+        bulge = 0.10 if male else (0.04 if female else 0.05)
+        taper = 0.22 if not female else 0.18
+        return lambda t, b=bulge, k=taper: 1.00 - k * t + b * math.sin(math.pi * t)
     if name.startswith("farm_"):
-        return lambda t: 0.98 - 0.30 * t + 0.08 * math.sin(math.pi * t)
+        scale = 1.00 if not female else 0.94
+        return lambda t, s=scale: s * (0.98 - 0.30 * t + 0.08 * math.sin(math.pi * t))
     if name.startswith("thigh_"):
+        # Female thigh: less taper, fuller at the head (gluteal/hip fat)
+        # and broader at the knee (quad fat). Male thigh keeps a clearer
+        # vastus lateralis bulge mid-thigh.
+        if female:
+            return lambda t: 1.10 - 0.14 * t + 0.06 * math.sin(math.pi * t)
+        if male:
+            return lambda t: 1.00 - 0.26 * t + 0.08 * math.sin(math.pi * t)
         return lambda t: 1.00 - 0.24 * t + 0.04 * math.sin(math.pi * t)
     if name.startswith("shin_"):
+        # Calf bulge: pronounced + slightly higher for males.
+        if male:
+            return lambda t: 0.86 - 0.22 * t + 0.36 * math.sin(math.pi * t)
+        if female:
+            return lambda t: 0.82 - 0.22 * t + 0.24 * math.sin(math.pi * t)
         return lambda t: 0.84 - 0.22 * t + 0.30 * math.sin(math.pi * t)
     return None
 
@@ -236,7 +291,8 @@ _GARMENT_CAP_SCALE = {
 }
 
 
-def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> SkinnedMesh:
+def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0,
+                   gender="neutral", shape=None) -> SkinnedMesh:
     """Build a capsule mesh that only covers the named bones.
 
     Used for procedural garments: inflate the capsule radius by
@@ -264,7 +320,11 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         # in a wide "candle" cuff that the much smaller hand/foot pokes
         # out of. Run a matching profiled capsule for those bones so the
         # sleeve hugs the wrist / the trouser leg hugs the ankle.
-        body_profile = _limb_profile(name)
+        body_profile = _limb_profile(name, gender)
+        # Cloth covering chest/spine should also follow the torso taper so
+        # a cinched waist doesn't show a chest-bottom skirt-ring.
+        if body_profile is None:
+            body_profile = _torso_profile(name, shape)
         if body_profile is not None and name in ("farm_L", "farm_R",
                                                   "shin_L", "shin_R",
                                                   "uarm_L", "uarm_R",
@@ -283,6 +343,19 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
                 return (body_r_at(t) + clearance) / r
             v, n, ba, bb, w, idx = _profiled_capsule(
                 i, parent, length, r, garment_profile,
+                top_cap_scale=top_scale,
+                bottom_cap_scale=bot_scale,
+            )
+        elif body_profile is not None and name in ("chest", "spine"):
+            # Torso cloth follows the chest -> waist taper at uniform
+            # clearance so the bottom of the chest shell meets the spine
+            # shell without a step.
+            body_r_at = lambda t, p=body_profile, br=r: br * p(t)
+            def torso_garment_profile(t, body_r_at=body_r_at, r=r,
+                                       infl=radius_inflate):
+                return (body_r_at(t) + infl) / r
+            v, n, ba, bb, w, idx = _profiled_capsule(
+                i, parent, length, r, torso_garment_profile,
                 top_cap_scale=top_scale,
                 bottom_cap_scale=bot_scale,
             )
@@ -405,6 +478,7 @@ def build(bones, shape=None) -> SkinnedMesh:
     chest_idx = _find(bones, "chest")
     hand_idx_L = _find(bones, "hand_L")
     hand_idx_R = _find(bones, "hand_R")
+    gender = getattr(shape, "gender", "neutral") if shape else "neutral"
     chunks = []
 
     for i, (name, parent, _, tip, r) in enumerate(bones):
@@ -427,7 +501,9 @@ def build(bones, shape=None) -> SkinnedMesh:
             top_scale, bot_scale = 0.90, 0.25
         else:
             top_scale, bot_scale = 1.0, 1.0
-        profile = _limb_profile(name)
+        profile = _limb_profile(name, gender)
+        if profile is None:
+            profile = _torso_profile(name, shape)
         if profile is None:
             v, n, ba, bb, w, idx = _capsule(i, parent, length, r,
                                              top_cap_scale=top_scale,
@@ -449,9 +525,13 @@ def build(bones, shape=None) -> SkinnedMesh:
         _, parent, _, tip, r = bones[h_idx]
         chunks.extend(_hand_compound(h_idx, parent, np.asarray(tip, np.float32), r, side))
 
-    # Deltoid bulges at each shoulder (rounds the silhouette and avoids the
-    # visible wedge between the chest and upper-arm capsules). Slightly
-    # smaller than before so garments with standard inflate still cover it.
+    # Deltoid bulges at each shoulder. Sized by gender: male shoulders
+    # carry visible deltoid mass, female shoulders are softer. The cap
+    # still has to fit inside the garment radius_inflate so it doesn't
+    # poke through the shirt -- keep the male axes <= 1.06 of arm radius.
+    delt_x = 1.04 if gender == "male" else (0.92 if gender == "female" else 1.00)
+    delt_y = 0.78 if gender == "male" else (0.74 if gender == "female" else 0.78)
+    delt_z = 0.98 if gender == "male" else (0.90 if gender == "female" else 0.96)
     for uarm_name in ("uarm_L", "uarm_R"):
         u_idx = _find(bones, uarm_name)
         if u_idx < 0:
@@ -462,7 +542,7 @@ def build(bones, shape=None) -> SkinnedMesh:
         r_shoulder = u_r * 0.98
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, -0.01, 0.0),
-            (r_shoulder * 1.00, r_shoulder * 0.88, r_shoulder * 0.96),
+            (r_shoulder * delt_x, r_shoulder * delt_y, r_shoulder * delt_z),
             u_idx, u_parent, weight_self=0.75,
             rings=12, radial=16,
         )
@@ -472,17 +552,18 @@ def build(bones, shape=None) -> SkinnedMesh:
         head_parent = bones[head_idx][1]
         head_tip = np.asarray(bones[head_idx][3], dtype=np.float32)
         head_r = bones[head_idx][4]
-        gender = getattr(shape, "gender", "neutral") if shape else "neutral"
         chunks.extend(_head_compound(head_idx, head_parent, head_tip, head_r, gender))
 
     if shape is not None and getattr(shape, "bust", 0.0) > 0.01 and chest_idx >= 0:
-        chunks.extend(_bust(chest_idx, bones[chest_idx], shape.bust))
+        chunks.extend(_bust(chest_idx, bones[chest_idx], shape.bust,
+                            projection=getattr(shape, "bust_proj", 0.6)))
 
     if shape is not None and getattr(shape, "gender", "neutral") == "female":
         pelvis_idx = _find(bones, "pelvis")
         if pelvis_idx >= 0:
             chunks.extend(_glutes(pelvis_idx, bones[pelvis_idx],
-                                  getattr(shape, "hip_w", 1.0)))
+                                  getattr(shape, "hip_w", 1.0),
+                                  lower_bulk=getattr(shape, "lower_bulk", 1.0)))
 
     v, n, ba, bb, w, idx = prim.merge(chunks)
     bones_pair = np.stack([ba, bb], axis=1).astype(np.int32)
@@ -589,20 +670,38 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender):
 
 # --- female bust -------------------------------------------------------------
 
-def _bust(chest_idx, chest_bone, amount):
-    """Two small ellipsoids attached to the chest bone for female characters."""
+def _bust(chest_idx, chest_bone, amount, projection=0.6):
+    """Two ellipsoids attached to the chest bone for female characters.
+
+    Geometry:
+      * Sit on the upper half of the chest bone (pectoral plane), centred
+        roughly on the nipple line at ~60% of chest length.
+      * Separation ~ chest radius * 0.40 (one fingerbreadth at the sternum).
+      * Forward projection scales with `projection` (0..1) -- this is the
+        knob that makes the bust visible above a tank top.
+      * Slight downward teardrop axis (Y < X, Z big) so the silhouette
+        from the side reads as breast-shaped, not as a sphere.
+
+    `amount` controls overall mass; `projection` controls how far the
+    breast tissue sticks out forward (Z axis) relative to its base size.
+    """
     _, _, _, tip, radius = chest_bone
     tip_vec = np.asarray(tip, dtype=np.float32)
     R = mathx.align_y_to(tip_vec)
     length = float(np.linalg.norm(tip_vec))
-    sep = radius * 0.45
+    sep = radius * 0.40
     y = length * 0.55
-    z = radius * 0.55
-    size = radius * (0.18 + 0.18 * amount)
-    rxyz = (size * 1.05, size * 0.85, size)
+    z = radius * (0.45 + 0.50 * projection)
+    base = radius * (0.30 + 0.22 * amount)
+    # Slightly narrower than the cloth overlay so the skin layer sits
+    # inside the fabric surface; matched X so the overlay doesn't show
+    # a step at the side silhouette.
+    rxyz = (base * 0.96, base * 0.78, base * (1.05 + 0.55 * projection))
     chunks = [
-        prim.ellipsoid((+sep, y, z), rxyz, chest_idx, -1, weight_self=1.0),
-        prim.ellipsoid((-sep, y, z), rxyz, chest_idx, -1, weight_self=1.0),
+        prim.ellipsoid((+sep, y, z), rxyz, chest_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
+        prim.ellipsoid((-sep, y, z), rxyz, chest_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
     ]
     return [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
 
@@ -668,21 +767,27 @@ def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
 
 # --- glutes ------------------------------------------------------------------
 
-def _glutes(pelvis_idx, pelvis_bone, hip_w):
+def _glutes(pelvis_idx, pelvis_bone, hip_w, lower_bulk=1.0):
     """Two ellipsoids on the back of the pelvis (female). Larger when hips
-    are wider."""
+    are wider OR when lower_bulk indicates more gynoid fat distribution."""
     _, _, _, tip, radius = pelvis_bone
     tip_vec = np.asarray(tip, dtype=np.float32)
     R = mathx.align_y_to(tip_vec)
     length = float(np.linalg.norm(tip_vec))
-    sep = radius * 0.50 * hip_w
-    y = -length * 0.2       # below pelvis head, at seat level
-    z = -radius * 0.55      # behind the body
-    size = radius * (0.48 + 0.14 * hip_w)
-    rxyz = (size * 0.95, size * 0.85, size)
+    # Glute centres sit just inside the pelvis cap so the cheeks blend
+    # into the hip silhouette rather than sticking out as separate balls.
+    sep = radius * 0.34 * (0.5 + 0.5 * hip_w)
+    y = -length * 0.10
+    z = -radius * 0.55
+    size = radius * (0.46 + 0.12 * hip_w) * (0.88 + 0.22 * lower_bulk)
+    # X axis narrow (so the cheeks don't push past the hip silhouette),
+    # Y a bit squashed (vertical), Z deep (the buttock projects backward).
+    rxyz = (size * 0.86, size * 0.92, size * 1.10)
     chunks = [
-        prim.ellipsoid((+sep, y, z), rxyz, pelvis_idx, -1, weight_self=1.0),
-        prim.ellipsoid((-sep, y, z), rxyz, pelvis_idx, -1, weight_self=1.0),
+        prim.ellipsoid((+sep, y, z), rxyz, pelvis_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
+        prim.ellipsoid((-sep, y, z), rxyz, pelvis_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
     ]
     return [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
 

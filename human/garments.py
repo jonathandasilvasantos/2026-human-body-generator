@@ -69,14 +69,16 @@ BOTTOM_BONE_SETS = {
 
 # --- tight garments (tops + pants/shorts) -----------------------------------
 
-def build_top(bones, style, inflate=0.022, length_scale=1.0) -> SkinnedMesh:
+def build_top(bones, style, inflate=0.022, length_scale=1.0,
+              gender="neutral", shape=None) -> SkinnedMesh:
     """T-shirt / tank / long-sleeve. Dresses handled by :func:`build_dress`."""
     if style == "dress":
         return _empty_mesh()
     names = TOP_BONE_SETS.get(style)
     if not names:
         return _empty_mesh()
-    return mesh_mod.build_selected(bones, names, inflate, length_scale)
+    return mesh_mod.build_selected(bones, names, inflate, length_scale,
+                                   gender, shape)
 
 
 # Bone sets for the sleeve underlayer: a thin fabric-colored shell that
@@ -93,7 +95,7 @@ _UNDERLAYER_BONES = {
 
 
 def build_sleeve_underlayer(bones, style, top_inflate=0.022,
-                            length_scale=1.0) -> SkinnedMesh:
+                            length_scale=1.0, gender="neutral") -> SkinnedMesh:
     """Fabric-colored shell nested between skin and sleeve.
 
     Radius sits at ~35% of the way from skin (r) to sleeve (r+top_inflate),
@@ -110,10 +112,11 @@ def build_sleeve_underlayer(bones, style, top_inflate=0.022,
     # Shrink slightly so the underlayer doesn't poke past the sleeve cuff
     # at wrist/elbow.
     return mesh_mod.build_selected(bones, names, underlayer_inflate,
-                                   length_scale * 0.985)
+                                   length_scale * 0.985, gender)
 
 
-def build_bottom(bones, style, inflate=0.020, length_scale=1.0) -> SkinnedMesh:
+def build_bottom(bones, style, inflate=0.020, length_scale=1.0,
+                 gender="neutral") -> SkinnedMesh:
     """Pants / shorts. Skirts handled by :func:`build_skirt`."""
     if style in ("none", "skirt"):
         return _empty_mesh()
@@ -121,7 +124,50 @@ def build_bottom(bones, style, inflate=0.020, length_scale=1.0) -> SkinnedMesh:
     if not names:
         return _empty_mesh()
     # tuck pants/shorts up slightly to sit below the garment top
-    return mesh_mod.build_selected(bones, names, inflate, length_scale)
+    return mesh_mod.build_selected(bones, names, inflate, length_scale, gender)
+
+
+# --- bust fabric overlay -----------------------------------------------------
+
+def build_bust_overlay(bones, shape, top_inflate=0.022) -> SkinnedMesh:
+    """Two fabric ellipsoids that sit just outside the female bust skin so
+    a top stretches over the breast shape instead of letting bare skin
+    poke through the chest cylinder.
+
+    Built only when the character has a non-zero bust amount AND a top;
+    the caller is expected to gate that. Skinned to the chest bone like
+    the bust skin layer so it deforms identically.
+    """
+    chest_idx = _find(bones, "chest")
+    if chest_idx < 0 or shape is None:
+        return _empty_mesh()
+    bust = float(getattr(shape, "bust", 0.0))
+    if bust < 0.01:
+        return _empty_mesh()
+    proj = float(getattr(shape, "bust_proj", 0.6))
+
+    _, _, _, tip, radius = bones[chest_idx]
+    tip_vec = np.asarray(tip, dtype=np.float32)
+    R = mathx.align_y_to(tip_vec)
+    length = float(np.linalg.norm(tip_vec))
+    sep = radius * 0.40
+    y = length * 0.55
+    # Push slightly closer to the chest centre so the overlay base sits
+    # inside the tank surface (less visible seam) while still projecting.
+    z = radius * (0.45 + 0.50 * proj)
+    base = radius * (0.32 + 0.22 * bust) + max(0.004, top_inflate * 0.60)
+    # Wider X base so the overlay fairs into the chest tank silhouette
+    # instead of showing a hard ring where ellipsoid meets cylinder.
+    rxyz = (base * 1.00, base * 0.80, base * (1.10 + 0.55 * proj))
+    chunks = [
+        prim.ellipsoid((+sep, y, z), rxyz, chest_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
+        prim.ellipsoid((-sep, y, z), rxyz, chest_idx, -1, weight_self=1.0,
+                       rings=12, radial=14),
+    ]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx)
+              for (v, n, ba, bb, w, idx) in chunks]
+    return _mesh_from_chunks(chunks)
 
 
 # --- shoes -------------------------------------------------------------------

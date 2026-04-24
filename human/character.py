@@ -298,17 +298,29 @@ class Character:
                                      length_frac=app.dress_length_frac,
                                      flare=app.dress_flare),
                 app.top_color, 1)
+            add(garments.build_bust_overlay(self.bones, self.shape,
+                                            top_inflate=0.014),
+                app.top_color, 1)
         else:
             # Fabric-colored underlayer on the arms, drawn before the sleeve
             # so momentary skin-through-sleeve clipping reveals garment
             # color instead of bare skin. Only applicable to sleeved tops.
             add(garments.build_sleeve_underlayer(self.bones, app.top_style,
                                                  top_inflate=app.top_inflate,
-                                                 length_scale=app.top_length_scale),
+                                                 length_scale=app.top_length_scale,
+                                                 gender=self.shape.gender),
                 app.top_color, 1)
             add(garments.build_top(self.bones, app.top_style,
                                    inflate=app.top_inflate,
-                                   length_scale=app.top_length_scale),
+                                   length_scale=app.top_length_scale,
+                                   gender=self.shape.gender,
+                                   shape=self.shape),
+                app.top_color, 1)
+            # Fabric bust overlay: nests over the bust skin so the top
+            # reads as draped fabric instead of bare skin poking through
+            # the cylindrical tank/shirt.
+            add(garments.build_bust_overlay(self.bones, self.shape,
+                                            top_inflate=app.top_inflate),
                 app.top_color, 1)
 
         if app.bottom_style == "skirt":
@@ -319,7 +331,8 @@ class Character:
         elif app.bottom_style in ("pants", "shorts"):
             add(garments.build_bottom(self.bones, app.bottom_style,
                                       inflate=app.bottom_inflate,
-                                      length_scale=app.bottom_length_scale),
+                                      length_scale=app.bottom_length_scale,
+                                      gender=self.shape.gender),
                 app.bottom_color, 1)
 
         add(garments.build_shoes(self.bones, app.shoe_style), app.shoe_color, 4)
