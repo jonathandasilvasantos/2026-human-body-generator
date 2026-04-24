@@ -23,6 +23,27 @@ from . import primitives as prim
 from .mesh import SkinnedMesh, _empty_mesh, _find
 
 
+def _merge_meshes(meshes) -> SkinnedMesh:
+    parts = []
+    for m in meshes:
+        if m is None or m.indices.size == 0:
+            continue
+        parts.append((m.positions, m.normals,
+                      m.bones[:, 0], m.bones[:, 1],
+                      m.weights, m.indices))
+    if not parts:
+        return _empty_mesh()
+    v, n, ba, bb, w, idx = prim.merge(parts)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def _mesh_from_chunks(chunks) -> SkinnedMesh:
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    if idx.size == 0:
+        return _empty_mesh()
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
 # --- garment catalogs --------------------------------------------------------
 
 TOP_BONE_SETS = {
@@ -109,6 +130,9 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
     bottom_radius = top_radius * flare
     top_center = (0.0, 0.01, 0.0)
 
+    band_h = min(0.018, max(0.010, thigh_len * 0.035))
+    hem_y = top_center[1] - total_drop
+
     chunks = [prim.cone_shell(
         top_center, top_radius,
         height=total_drop,
@@ -117,8 +141,27 @@ def build_skirt(bones, length_frac=0.9, flare=1.5) -> SkinnedMesh:
         parent_index=-1,
         rings=8, radial=28,
     )]
-    v, n, ba, bb, w, idx = prim.merge(chunks)
-    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+    # Raised waistband and hem add pattern-like garment boundaries and make
+    # the otherwise infinitely thin cone shell read as constructed cloth.
+    chunks.append(prim.cone_shell(
+        (0.0, top_center[1] + band_h * 0.5, 0.0),
+        top_radius * 1.035,
+        height=band_h,
+        bottom_radius=top_radius * 1.02,
+        bone_index=pelvis_idx,
+        parent_index=-1,
+        rings=2, radial=28,
+    ))
+    chunks.append(prim.cone_shell(
+        (0.0, hem_y + band_h * 0.5, 0.0),
+        bottom_radius * 1.015,
+        height=band_h,
+        bottom_radius=bottom_radius * 1.04,
+        bone_index=pelvis_idx,
+        parent_index=-1,
+        rings=2, radial=28,
+    ))
+    return _mesh_from_chunks(chunks)
 
 
 # --- dress -------------------------------------------------------------------
@@ -154,29 +197,31 @@ def build_dress(bones, length_frac=1.0, flare=1.4) -> SkinnedMesh:
     hem_drop = 0.10 + thigh_len * length_frac
     hem_r = waist_r * flare
 
+    band_h = min(0.020, max(0.011, thigh_len * 0.035))
+    hem_y = waist_y - hem_drop
     cone = prim.cone_shell(
         (0.0, waist_y, 0.0), waist_r,
         height=hem_drop, bottom_radius=hem_r,
         bone_index=pelvis_idx, parent_index=-1,
         rings=10, radial=28,
     )
-    lower_parts = [cone]
-    lower_v, lower_n, lower_ba, lower_bb, lower_w, lower_idx = prim.merge(lower_parts)
-    lower = SkinnedMesh(lower_v, lower_n,
-                        np.stack([lower_ba, lower_bb], axis=1).astype(np.int32),
-                        lower_w, lower_idx)
-    if upper.indices.size == 0 and lower.indices.size == 0:
-        return _empty_mesh()
-
-    # Merge
-    parts = []
-    if upper.indices.size:
-        parts.append((upper.positions, upper.normals,
-                      upper.bones[:, 0], upper.bones[:, 1],
-                      upper.weights, upper.indices))
-    if lower.indices.size:
-        parts.append((lower.positions, lower.normals,
-                      lower.bones[:, 0], lower.bones[:, 1],
-                      lower.weights, lower.indices))
-    v, n, ba, bb, w, idx = prim.merge(parts)
-    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+    lower = _mesh_from_chunks([
+        cone,
+        prim.cone_shell(
+            (0.0, waist_y + band_h * 0.45, 0.0),
+            waist_r * 1.025,
+            height=band_h,
+            bottom_radius=waist_r * 1.01,
+            bone_index=pelvis_idx, parent_index=-1,
+            rings=2, radial=28,
+        ),
+        prim.cone_shell(
+            (0.0, hem_y + band_h * 0.5, 0.0),
+            hem_r * 1.015,
+            height=band_h,
+            bottom_radius=hem_r * 1.04,
+            bone_index=pelvis_idx, parent_index=-1,
+            rings=2, radial=28,
+        ),
+    ])
+    return _merge_meshes([upper, lower])
