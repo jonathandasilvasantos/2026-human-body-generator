@@ -252,9 +252,37 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0) -> 
         if length < 1e-5:
             continue
         top_scale, bot_scale = _GARMENT_CAP_SCALE.get(name, (1.0, 1.0))
-        v, n, ba, bb, w, idx = _capsule(i, parent, length, r + radius_inflate,
-                                         top_cap_scale=top_scale,
-                                         bottom_cap_scale=bot_scale)
+        # For sleeve/trouser cuff bones, the underlying body limb tapers
+        # (see `_limb_profile`). A uniform-radius cloth capsule then ends
+        # in a wide "candle" cuff that the much smaller hand/foot pokes
+        # out of. Run a matching profiled capsule for those bones so the
+        # sleeve hugs the wrist / the trouser leg hugs the ankle.
+        body_profile = _limb_profile(name)
+        if body_profile is not None and name in ("farm_L", "farm_R",
+                                                  "shin_L", "shin_R",
+                                                  "uarm_L", "uarm_R",
+                                                  "thigh_L", "thigh_R"):
+            # Garment profile = body taper, with the extra clearance
+            # contributing more at the proximal end (loose where the limb
+            # is fat) and tapering near the cuff so the seam meets the
+            # wrist/ankle without slack.
+            body_r_at = lambda t, p=body_profile, br=r: br * p(t)
+            cuff_extra = max(0.004, radius_inflate * 0.35)
+            def garment_profile(t, body_r_at=body_r_at, r=r,
+                                infl=radius_inflate, cuff=cuff_extra):
+                # Linearly fade clearance from full at elbow/knee to cuff
+                # at the wrist/ankle so the cloth converges on the limb.
+                clearance = infl * (1.0 - t) + cuff * t
+                return (body_r_at(t) + clearance) / r
+            v, n, ba, bb, w, idx = _profiled_capsule(
+                i, parent, length, r, garment_profile,
+                top_cap_scale=top_scale,
+                bottom_cap_scale=bot_scale,
+            )
+        else:
+            v, n, ba, bb, w, idx = _capsule(i, parent, length, r + radius_inflate,
+                                             top_cap_scale=top_scale,
+                                             bottom_cap_scale=bot_scale)
         R = mathx.align_y_to(tip_vec)
         v = v @ R.T
         n = n @ R.T
