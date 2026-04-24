@@ -156,6 +156,12 @@ into image strips (`tools/face_anim_capture.py`).
 - **Cycle 3** — cross-character validation: render the full preset
   matrix across multiple seeds/genders/age groups, fix any
   coverage gaps in the brow/cheek/jaw mapping.
+- **Muscular deformation pass** — keep ARKit/FACS as the public control
+  surface, derive regional activations in `face_anim.muscle_activations`,
+  smooth keyframe transitions, improve lip volume compensation, jaw/lip
+  coupling and brow/lid muscle coupling, then validate with front,
+  three-quarter, profile and close-up captures across characters. See
+  `notes/muscular_facial_deformation.md`.
 
 ## References
 

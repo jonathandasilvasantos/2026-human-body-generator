@@ -360,6 +360,9 @@ class Character:
         # shader they should read as shallow folds, not painted black decals.
         crease_mul = 0.76 if app.age_group == "elder" else 0.88
         crease = tuple(min(1.0, c * crease_mul) for c in app.skin_color)
+        dynamic_crease = tuple(min(1.0, c * 0.90) for c in app.skin_color)
+        add(mesh_mod.build_expression_folds(self.bones, self.shape, face_w),
+            dynamic_crease, 0)
         add(mesh_mod.build_age_detail(self.bones, self.shape, app.age_group),
             crease, 0)
 

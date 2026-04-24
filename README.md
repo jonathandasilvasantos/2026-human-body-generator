@@ -111,7 +111,8 @@ retargeted onto two different procedurally-generated characters:
   same language as the academic literature.
 - `human/face_anim.py` defines the 52 canonical channel names,
   FACS-coded named presets (Ekman six + Duchenne smile + contempt +
-  visemes), `FaceRig.resolve()` and a `FaceClip` keyframe interpolator.
+  visemes), `FaceRig.resolve()`, regional muscle activation helpers and
+  a `FaceClip` keyframe interpolator.
 - Each ARKit weight modulates a parameter of the matching parametric
   primitive: `eyeBlink*` -> upper-lid Y, `cheekSquint*` -> lower-lid
   raise (Duchenne marker), `eyeLook*` -> per-eye iris/pupil offset,
@@ -119,11 +120,16 @@ retargeted onto two different procedurally-generated characters:
   separation, `mouthPucker`/`mouthFunnel` -> lip ring squeeze, etc.
 - Per-side channels keep asymmetry first-class: contempt, wink,
   single-side brow flash, asymmetric anger all fall out for free.
+- ARKit weights are also mapped into real-time muscle-region signals
+  (zygomaticus/risorius/depressor groups, orbicularis oculi/oris,
+  nasalis/levator labii and jaw/chin tension) so deformation stays tied
+  to plausible anatomical regions instead of arbitrary surface motion.
 - `Appearance.expression` (legacy named preset) and the new
   `Appearance.blendshapes` dict layer cleanly: e.g.
   `expression="smile", blendshapes={"eyeBlinkLeft": 1.0}` gives a
   smiling left-eye wink.
-- See `notes/facial_animation.md`. Capture matrices live in
+- See `notes/facial_animation.md` and
+  `notes/muscular_facial_deformation.md`. Capture matrices live in
   `tools/face_anim_capture.py` (`presets`, `clips`, `channels`,
   `asymmetry`, `narrative`, `crossvalidate`, `with_pose`).
 

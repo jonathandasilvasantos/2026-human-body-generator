@@ -158,6 +158,7 @@ def build_eyebrows(bones, weights=None) -> SkinnedMesh:
     outer_size  = (length * 0.014, hy * 0.90)
 
     inner_up   = _fa.w(weights, "browInnerUp")
+    muscles = _fa.muscle_activations(weights)
     LIFT       = length * 0.024     # full-weight vertical lift
     PINCH      = length * 0.010     # full-weight inner-X pull toward midline
     DROP       = length * 0.020     # full-weight brow-down drop
@@ -166,16 +167,18 @@ def build_eyebrows(bones, weights=None) -> SkinnedMesh:
     for side, suffix in ((+1.0, "Left"), (-1.0, "Right")):
         outer_up = _fa.w(weights, f"browOuterUp{suffix}")
         down     = _fa.w(weights, f"browDown{suffix}")
+        corr     = muscles[f"corrugator_{suffix.lower()}"]
+        front    = muscles[f"frontalis_{suffix.lower()}"]
 
         # Inner head: lifts with browInnerUp, drops with browDown,
         # and (for browDown) is pulled medially producing the AU4 pinch.
-        inner_dy = LIFT * inner_up - DROP * down
-        inner_dx = -side * PINCH * (down + 0.30 * inner_up)
+        inner_dy = LIFT * inner_up - DROP * down - length * 0.004 * corr
+        inner_dx = -side * PINCH * (down + 0.30 * inner_up + 0.35 * corr)
         # Mid body: averaged effect.
         mid_dy = 0.5 * (LIFT * inner_up + LIFT * outer_up) - DROP * down
-        mid_dx = -side * PINCH * 0.45 * down
+        mid_dx = -side * PINCH * (0.45 * down + 0.20 * corr)
         # Outer tail: only outerUp + brow-down.
-        outer_dy = LIFT * outer_up - 0.6 * DROP * down
+        outer_dy = LIFT * outer_up + length * 0.004 * front - 0.6 * DROP * down
 
         chunks += [
             prim.flat_patch((side * sep_inner + inner_dx, y_inner_b + inner_dy, z),

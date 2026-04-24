@@ -19,7 +19,9 @@ Geometry consumers (``build_eyelids``, ``build_lips``,
 ``build_eyebrows``, ``build_iris`` family) read individual channel
 values via ``w(...)``; channels with no geometric hook in this
 parametric face are accepted but no-op (eg. ``tongueOut``,
-``mouthRoll*``, ``jawForward``).
+``mouthRoll*``). ``muscle_activations(...)`` derives anatomy-region
+signals from ARKit/FACS weights so procedural deformation can preserve
+muscle coupling without changing the public rig API.
 """
 
 from __future__ import annotations
@@ -259,6 +261,95 @@ def w(weights: Optional[Mapping[str, float]], name: str) -> float:
     return FaceRig.w(weights, name)
 
 
+# --- anatomy-region muscle activation helpers --------------------------------
+
+def _sat(v: float) -> float:
+    if v <= 0.0:
+        return 0.0
+    if v >= 1.0:
+        return 1.0
+    return float(v)
+
+
+def _side(weights: Optional[Mapping[str, float]], stem: str, suffix: str) -> float:
+    return w(weights, f"{stem}{suffix}")
+
+
+def muscle_activations(weights: Optional[Mapping[str, float]]) -> Dict[str, float]:
+    """Return coupled, FACS/anatomy-oriented activation signals.
+
+    The public rig remains ARKit-52. This helper collects those sliders into
+    regional muscle groups used by the procedural geometry layer:
+
+    - zygomaticus/risorius/depressor groups for mouth corners
+    - orbicularis oculi + levator palpebrae for lids and cheek squint
+    - mentalis/depressor labii/jaw mass for lower-face tissue
+    - nasalis/levator labii for sneer and upper-lip lift
+
+    Values are intentionally normalized ``[0, 1]`` and cheap to evaluate so
+    the renderer can use them as real-time approximations rather than running
+    a volumetric simulation.
+    """
+    out: Dict[str, float] = {}
+
+    jaw = w(weights, "jawOpen")
+    close = w(weights, "mouthClose")
+    pucker = w(weights, "mouthPucker")
+    funnel = w(weights, "mouthFunnel")
+
+    out["jaw_open"] = jaw
+    out["lip_close"] = close
+    out["orbicularis_oris"] = _sat(0.75 * pucker + 0.55 * funnel + 0.35 * close)
+    out["mouth_lateral"] = w(weights, "mouthLeft") - w(weights, "mouthRight")
+
+    for suffix in ("Left", "Right"):
+        lowerer = _side(weights, "mouthFrown", suffix)
+        smile = _side(weights, "mouthSmile", suffix)
+        dimple = _side(weights, "mouthDimple", suffix)
+        stretch = _side(weights, "mouthStretch", suffix)
+        press = _side(weights, "mouthPress", suffix)
+        upper = _side(weights, "mouthUpperUp", suffix)
+        lower = _side(weights, "mouthLowerDown", suffix)
+        sneer = _side(weights, "noseSneer", suffix)
+        cheek = _side(weights, "cheekSquint", suffix)
+        squint = _side(weights, "eyeSquint", suffix)
+        blink = _side(weights, "eyeBlink", suffix)
+        wide = _side(weights, "eyeWide", suffix)
+        brow_down = _side(weights, "browDown", suffix)
+        brow_outer = _side(weights, "browOuterUp", suffix)
+
+        key = suffix.lower()
+        out[f"zygomatic_{key}"] = _sat(smile + 0.45 * dimple)
+        out[f"risorius_{key}"] = _sat(stretch + 0.25 * dimple)
+        out[f"depressor_anguli_{key}"] = lowerer
+        out[f"orbicularis_oculi_{key}"] = _sat(0.60 * cheek + 0.45 * squint + 0.20 * blink)
+        out[f"levator_labii_{key}"] = _sat(upper + 0.75 * sneer)
+        out[f"depressor_labii_{key}"] = _sat(lower + 0.45 * jaw)
+        out[f"nasalis_{key}"] = sneer
+        out[f"lip_press_{key}"] = press
+        out[f"levator_palpebrae_{key}"] = wide
+        out[f"corrugator_{key}"] = brow_down
+        out[f"frontalis_{key}"] = _sat(brow_outer + 0.55 * w(weights, "browInnerUp"))
+
+    out["smile"] = 0.5 * (out["zygomatic_left"] + out["zygomatic_right"])
+    out["frown"] = 0.5 * (out["depressor_anguli_left"] + out["depressor_anguli_right"])
+    out["sneer"] = 0.5 * (out["nasalis_left"] + out["nasalis_right"])
+    out["cheek_raise"] = 0.5 * (
+        out["orbicularis_oculi_left"] + out["orbicularis_oculi_right"]
+    )
+    out["mouth_tension"] = _sat(
+        0.40 * (out["risorius_left"] + out["risorius_right"])
+        + 0.30 * (out["lip_press_left"] + out["lip_press_right"])
+        + 0.35 * out["orbicularis_oris"]
+    )
+    out["chin_tension"] = _sat(
+        0.50 * jaw
+        + 0.30 * (out["depressor_labii_left"] + out["depressor_labii_right"])
+        + 0.20 * close
+    )
+    return out
+
+
 # --- animation clips --------------------------------------------------------
 
 @dataclass
@@ -299,6 +390,7 @@ class FaceClip:
             if a.time <= t <= b.time:
                 span = b.time - a.time
                 u = 0.0 if span <= 0 else (t - a.time) / span
+                u = u * u * (3.0 - 2.0 * u)
                 return {n: a.weights[n] * (1.0 - u) + b.weights[n] * u
                         for n in ARKIT_BLENDSHAPES}
         return dict(self.keys[-1].weights)

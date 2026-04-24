@@ -1328,6 +1328,7 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
     lid_z = z + eye_r * 0.88
     hx = eye_r * 1.36
 
+    muscles = _fa.muscle_activations(weights)
     chunks = []
     # side=+1 is character's LEFT eye (camera right). ARKit naming is
     # from the *character's* point of view, matching this convention.
@@ -1337,9 +1338,10 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
         wide    = _fa.w(weights, f"eyeWide{suffix}")
         squint  = _fa.w(weights, f"eyeSquint{suffix}")
         cheek_s = _fa.w(weights, f"cheekSquint{suffix}")
+        orbicularis = muscles[f"orbicularis_oculi_{suffix.lower()}"]
 
         # base aperture multiplier from wide/squint (excluding blink).
-        aperture = 1.0 + 0.30 * wide - 0.45 * squint
+        aperture = 1.0 + 0.30 * wide - 0.38 * squint - 0.12 * orbicularis
         if aperture < 0.05:
             aperture = 0.05
 
@@ -1349,7 +1351,7 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
         # orbitalis) without touching the upper lid -- the Duchenne tell.
         # Bigger amplitude makes the eye-narrowing read clearly when
         # paired with a smile.
-        lower_y += eye_r * 0.32 * cheek_s
+        lower_y += eye_r * (0.28 * cheek_s + 0.14 * orbicularis)
 
         # Blink: upper lid sweeps down to meet lower; lower stays put.
         if blink > 0.0:
@@ -1357,7 +1359,7 @@ def build_eyelids(bones, shape=None, weights=None) -> SkinnedMesh:
             upper_y = upper_y * (1.0 - blink) + target_y * blink
 
         upper_hy = eye_r * (0.46 - 0.08 * wide)
-        lower_hy = eye_r * (0.26 + 0.08 * (squint + cheek_s))
+        lower_hy = eye_r * (0.26 + 0.08 * (squint + cheek_s) + 0.04 * orbicularis)
 
         chunks.append(prim.flat_patch(
             (x, upper_y, lid_z),
@@ -1425,6 +1427,7 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     if info is None:
         return _empty_mesh()
     head_idx, parent, R, length, r, head_w, head_d = info
+    muscles = _fa.muscle_activations(weights)
     y_mouth = length * H_MOUTH
     z = head_d * 0.84
     fullness = _shape_trait(shape, "lip_fullness", 1.0)
@@ -1434,11 +1437,16 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
         fullness *= 0.82
 
     jaw_open    = _fa.w(weights, "jawOpen")
+    mouth_close = _fa.w(weights, "mouthClose")
+    jaw_left    = _fa.w(weights, "jawLeft")
+    jaw_right   = _fa.w(weights, "jawRight")
+    jaw_forward = _fa.w(weights, "jawForward")
     pucker      = _fa.w(weights, "mouthPucker")
     funnel      = _fa.w(weights, "mouthFunnel")
     mouth_left  = _fa.w(weights, "mouthLeft")
     mouth_right = _fa.w(weights, "mouthRight")
-    lateral     = (mouth_left - mouth_right) * length * 0.020
+    lateral     = ((mouth_left - mouth_right) * length * 0.020
+                   + (jaw_left - jaw_right) * length * 0.010)
 
     smile_l  = _fa.w(weights, "mouthSmileLeft")
     smile_r  = _fa.w(weights, "mouthSmileRight")
@@ -1457,50 +1465,66 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     sneer_l  = _fa.w(weights, "noseSneerLeft")
     sneer_r  = _fa.w(weights, "noseSneerRight")
     avg_smile = 0.5 * (smile_l + smile_r)
+    avg_press = 0.5 * (press_l + press_r)
+    mouth_tension = muscles["mouth_tension"]
+    orbicularis_oris = muscles["orbicularis_oris"]
+    jaw_drop = max(0.0, jaw_open - 0.45 * mouth_close)
 
     # Vertical separation: jawOpen drops lower lip, mouthClose pulls
     # upper down to meet it (handled implicitly via reduced upper Y).
-    open_amt = length * 0.060 * jaw_open + length * 0.016 * funnel
+    open_amt = length * 0.060 * jaw_drop + length * 0.016 * funnel
 
     # Upper lip: two symmetric lobes; per-side raise from upUp + sneer.
     up_half_sep = length * 0.025
-    up_rx = length * (0.040 - 0.010 * pucker + 0.008 * stretch_l)  # rough
-    up_ry = length * 0.0085 * fullness * (1.0 - 0.35 * (press_l + press_r) * 0.5)
-    up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel) * fullness
-    up_y = y_mouth + length * 0.010 + open_amt * 0.35 + length * 0.004 * avg_smile
+    lip_volume = 1.0 + 0.10 * pucker + 0.06 * funnel
+    press_thin = 1.0 - 0.30 * avg_press - 0.10 * mouth_close
+    up_rx = length * (0.040 - 0.010 * pucker
+                      + 0.008 * (stretch_l + stretch_r) * 0.5
+                      - 0.004 * orbicularis_oris)
+    up_ry = length * 0.0085 * fullness * max(0.52, press_thin)
+    up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel
+                      + 0.0025 * avg_press) * fullness * lip_volume
+    up_y = (y_mouth + length * 0.010 + open_amt * 0.35
+            + length * 0.004 * avg_smile - length * 0.010 * mouth_close)
+    lip_z_forward = length * (0.005 * pucker + 0.006 * funnel + 0.006 * jaw_forward)
 
     up_L_y = up_y + length * (0.014 * (upUp_l + 0.60 * sneer_l)
                               + 0.010 * smile_l - 0.004 * frown_l)
     up_R_y = up_y + length * (0.014 * (upUp_r + 0.60 * sneer_r)
                               + 0.010 * smile_r - 0.004 * frown_r)
     upper_L = prim.ellipsoid(
-        (+up_half_sep + lateral, up_L_y, z + length * 0.005 * pucker),
+        (+up_half_sep + lateral, up_L_y, z + lip_z_forward),
         (up_rx, up_ry, up_rz),
         head_idx, parent, rings=6, radial=14,
     )
     upper_R = prim.ellipsoid(
-        (-up_half_sep + lateral, up_R_y, z + length * 0.005 * pucker),
+        (-up_half_sep + lateral, up_R_y, z + lip_z_forward),
         (up_rx, up_ry, up_rz),
         head_idx, parent, rings=6, radial=14,
     )
 
     # Mouth corners: per-side smile / frown / dimple / stretch.
     base_corner_x = length * 0.060
-    corner_rx = length * 0.012
-    corner_ry = length * 0.0085
-    corner_rz = length * 0.0055
+    corner_rx = length * (0.012 + 0.003 * mouth_tension)
+    corner_ry = length * (0.0085 * max(0.58, 1.0 - 0.25 * avg_press))
+    corner_rz = length * (0.0055 + 0.002 * mouth_tension)
 
     def _corner(side_sign, smile, frown, dimple, stretch):
         # Wider amplitude than the legacy preset so a w=0.7 smile reads
         # plainly in a thumbnail-sized render. Frown amplitude is kept
         # smaller because mouth-corner-down past a few mm starts to
         # caricature.
-        lift = length * (0.044 * smile - 0.030 * frown)
-        # dimple pulls corner back (-Z) and slightly inward (X toward 0).
+        lift = length * (0.038 * smile - 0.030 * frown + 0.006 * jaw_drop)
+        # Dimple pulls corner back (-Z) and slightly inward (X toward 0).
+        # Smile also pulls the corner laterally/upward along zygomaticus,
+        # while pucker/funnel recruit orbicularis oris and pull inward.
         x = side_sign * (base_corner_x + length * 0.014 * stretch
-                         - length * 0.006 * dimple)
+                         + length * 0.010 * smile
+                         - length * 0.006 * dimple
+                         - length * 0.012 * orbicularis_oris)
         y = y_mouth + length * 0.001 + lift
-        z_off = -length * 0.002 - length * 0.006 * dimple
+        z_off = (-length * 0.002 - length * 0.006 * dimple
+                 + length * 0.004 * (pucker + funnel + jaw_forward))
         return prim.ellipsoid(
             (x + lateral, y, z + z_off),
             (corner_rx, corner_ry, corner_rz),
@@ -1513,18 +1537,93 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     # Lower lip: wider pillow. jawOpen + lowerDown drop it; pucker
     # narrows and pushes forward; press thins it.
     avg_lowDn = 0.5 * (lowDn_l + lowDn_r)
-    avg_press = 0.5 * (press_l + press_r)
     low_y = (y_mouth - length * 0.010 - open_amt * 0.65
-             - length * 0.014 * avg_lowDn + length * 0.003 * avg_smile)
-    low_rx = length * (0.070 - 0.018 * pucker + 0.011 * (stretch_l + stretch_r) * 0.5)
-    low_ry = length * 0.011 * fullness * (1.0 - 0.40 * avg_press)
-    low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel) * fullness
+             - length * 0.014 * avg_lowDn + length * 0.003 * avg_smile
+             + length * 0.012 * mouth_close)
+    low_rx = length * (0.070 - 0.018 * pucker
+                       + 0.011 * (stretch_l + stretch_r) * 0.5
+                       - 0.006 * orbicularis_oris)
+    low_ry = length * 0.011 * fullness * max(0.50, 1.0 - 0.34 * avg_press)
+    low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel
+                       + 0.0025 * avg_press) * fullness * lip_volume
     lower = prim.ellipsoid(
-        (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker),
+        (lateral, low_y, z + length * 0.002 + length * 0.008 * pucker
+         + length * 0.004 * funnel + length * 0.006 * jaw_forward),
         (low_rx, low_ry, low_rz),
         head_idx, parent, rings=6, radial=20,
     )
     chunks = [upper_L, upper_R, corner_L, corner_R, lower]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
+    """Subtle dynamic crease/shadow patches for active facial muscles."""
+    from . import face_anim as _fa
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, _head_w, head_d = info
+    m = _fa.muscle_activations(weights)
+    if max(m["smile"], m["frown"], m["sneer"], m["mouth_tension"],
+           m["chin_tension"]) < 0.04:
+        return _empty_mesh()
+
+    chunks = []
+    for side, suffix in ((+1.0, "left"), (-1.0, "right")):
+        zyg = m[f"zygomatic_{suffix}"]
+        dep = m[f"depressor_anguli_{suffix}"]
+        sneer = m[f"nasalis_{suffix}"]
+        corr = m[f"corrugator_{suffix}"]
+        fold = max(0.0, 0.65 * zyg + 0.55 * sneer + 0.30 * dep)
+        if fold > 0.045:
+            chunks.append(prim.flat_patch(
+                (side * length * 0.048,
+                 length * (0.370 - 0.018 * dep + 0.010 * zyg),
+                 head_d * 0.872),
+                (length * 0.0028, length * (0.034 + 0.004 * fold)),
+                head_idx, parent,
+                normal=(side * 0.42, -0.10, 1.0),
+                subdiv=(1, 5),
+                thickness=0.0008,
+            ))
+        mouth_pin = max(dep, m[f"lip_press_{suffix}"], m["mouth_tension"])
+        if mouth_pin > 0.055:
+            chunks.append(prim.flat_patch(
+                (side * length * 0.066,
+                 length * (0.305 - 0.020 * dep),
+                 head_d * 0.864),
+                (length * 0.0026, length * 0.014),
+                head_idx, parent,
+                normal=(side * 0.30, -0.18, 1.0),
+                subdiv=(1, 3),
+                thickness=0.0007,
+            ))
+        if corr > 0.12:
+            chunks.append(prim.flat_patch(
+                (side * length * 0.030,
+                 length * (H_BROW - 0.030),
+                head_d * 0.795),
+                (length * 0.0025, length * 0.018),
+                head_idx, parent,
+                normal=(side * 0.12, -0.25, 1.0),
+                subdiv=(1, 3),
+                thickness=0.0007,
+            ))
+
+    if m["chin_tension"] > 0.06:
+        chunks.append(prim.flat_patch(
+            (0.0, length * (0.236 - 0.012 * m["jaw_open"]), head_d * 0.850),
+            (length * 0.022, length * 0.004),
+            head_idx, parent,
+            normal=(0.0, -0.16, 1.0),
+            subdiv=(4, 1),
+            thickness=0.0007,
+        ))
+
+    if not chunks:
+        return _empty_mesh()
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)

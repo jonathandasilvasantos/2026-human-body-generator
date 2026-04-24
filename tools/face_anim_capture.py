@@ -67,8 +67,10 @@ EXPRESSIONS = [
 ]
 
 ANGLES = [
-    ("front", 0.0),
-    ("threeq", math.radians(32)),
+    ("front", 0.0, 0.42),
+    ("threeq", math.radians(32), 0.42),
+    ("profile", math.radians(72), 0.46),
+    ("closeup", math.radians(18), 0.30),
 ]
 
 LIGHTING_STYLES = {
@@ -187,8 +189,8 @@ def run_presets(args, fbo_ms, fbo_res, skin_prog):
             ch = _make_character(preset, expression=expr)
             target = _head_target(ch)
             for light_label, light_id in light_items:
-                for angle_label, yaw in ANGLES:
-                    view = _view(target, yaw, dist=0.42)
+                for angle_label, yaw, dist in ANGLES:
+                    view = _view(target, yaw, dist=dist)
                     img = _draw_to_array(ch, proj, view, args.width, args.height,
                                          fbo_ms, fbo_res, skin_prog,
                                          light_style=light_id)
