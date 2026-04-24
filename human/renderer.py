@@ -21,14 +21,30 @@ uniform mat4 u_bones[""" + str(MAX_BONES) + """];
 out vec3 v_nrm;
 out vec3 v_pos;
 out vec3 v_local;
+// Pose-space bend scalar: positive where the two skinning bones' rotations
+// diverge (elbow/knee/waist flexion seam on a dual-skinned garment). Zero
+// at rest pose and for single-bone-skinned vertices. Fed into the fabric
+// fragment shader as a wrinkle-intensity mask so cloth crumples at joints.
+out float v_bend;
 
 void main() {
-    mat4 M = u_bones[a_bones.x] * a_weights.x + u_bones[a_bones.y] * a_weights.y;
+    mat4 Ma = u_bones[a_bones.x];
+    mat4 Mb = u_bones[a_bones.y];
+    mat4 M = Ma * a_weights.x + Mb * a_weights.y;
     vec4 p = M * vec4(a_pos, 1.0);
     gl_Position = u_proj * u_view * p;
     v_pos = p.xyz;
     v_nrm = mat3(M) * a_nrm;
     v_local = a_pos;
+
+    // Divergence of the two bones' rotations applied to the rest position.
+    // mat3() strips translation so parent/child rest-pose offsets cancel;
+    // only rotation differences contribute. Weight product w_a * w_b peaks
+    // at 0.25 on the 50/50 blend band -- exactly the joint fold zone.
+    vec3 da = mat3(Ma) * a_pos;
+    vec3 db = mat3(Mb) * a_pos;
+    float blend = a_weights.x * a_weights.y;
+    v_bend = clamp(length(da - db) * blend * 4.0, 0.0, 1.2);
 }
 """
 
@@ -37,6 +53,7 @@ SKIN_FRAG = """
 in vec3 v_nrm;
 in vec3 v_pos;
 in vec3 v_local;
+in float v_bend;
 out vec4 frag;
 
 uniform vec3  u_color;
@@ -203,6 +220,31 @@ void main() {
         float folds = 0.5 + 0.5 * cos(v_pos.y * 18.0 + fbm(sample_p * 2.0) * 4.0);
         float fold_mask = smoothstep(0.55, 1.0, folds) * (0.65 + 0.35 * abs(n.z));
         albedo *= 1.0 - 0.06 * fold_mask;
+
+        // Pose-driven compression wrinkles: at elbows / knees / waist the
+        // vertex shader reports a non-zero v_bend, peaking along the 50/50
+        // two-bone blend band. Add a high-frequency ripple pattern that
+        // darkens with bend intensity and also lifts/dips the perceived
+        // normal so the lighting picks up the fold. Direction uses
+        // v_local.y so wrinkles run across the limb, not along it.
+        if (v_bend > 0.02) {
+            float bendc = clamp(v_bend, 0.0, 1.0);
+            float ripple = 0.5 + 0.5 * sin(v_local.y * 140.0
+                                            + fbm(sample_p * 3.0) * 4.0);
+            float ripple_mask = smoothstep(0.35, 0.95, ripple);
+            // Dark "valley" lines between ridges.
+            albedo *= 1.0 - 0.18 * bendc * ripple_mask;
+            // A second, lower-frequency fold that reads as a single deep
+            // crease at the joint apex (strong bends only).
+            float crease = smoothstep(0.55, 1.0,
+                0.5 + 0.5 * cos(v_local.y * 32.0
+                                 + fbm(sample_p * 1.8) * 3.0));
+            albedo *= 1.0 - 0.12 * bendc * bendc * crease;
+            // Tint toward a slightly desaturated shadow so the fold reads
+            // as depth rather than dirt.
+            albedo = mix(albedo, albedo * vec3(0.88, 0.90, 0.94),
+                         0.18 * bendc * ripple_mask);
+        }
 
         float lint = fbm(sample_p * 24.0);
         albedo *= 0.96 + 0.07 * lint;
