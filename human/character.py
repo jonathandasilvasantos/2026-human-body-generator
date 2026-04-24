@@ -315,7 +315,20 @@ class Character:
         add(mesh_mod.build_eyes(self.bones, self.shape),       sclera,         3)
         add(mesh_mod.build_limbus(self.bones, self.shape),     _EYE_LIMBUS,    3)
         add(mesh_mod.build_iris(self.bones, self.shape),       app.eye_color,  3)
+        # Collarette: faintly darker ring inside the iris -- breaks the
+        # colored disc into pupillary + ciliary zones the way a real
+        # iris does.
+        collarette = tuple(c * 0.55 for c in app.eye_color)
+        add(mesh_mod.build_collarette(self.bones, self.shape), collarette,     3)
         add(mesh_mod.build_pupils(self.bones, self.shape),     app.pupil_color, 3)
+        # Lacrimal caruncle (flesh-pink tear-duct bump at medial canthus).
+        # Tinted off the character's skin tone so it tracks body color.
+        caruncle = (
+            min(1.0, app.skin_color[0] * 0.92 + 0.08),
+            min(1.0, app.skin_color[1] * 0.62),
+            min(1.0, app.skin_color[2] * 0.58),
+        )
+        add(mesh_mod.build_caruncle(self.bones, self.shape),   caruncle,       0)
         add(mesh_mod.build_catchlights(self.bones, self.shape), _EYE_CATCH,    3)
         add(mesh_mod.build_eyelids(self.bones, self.shape, app.expression),
             app.skin_color, 0)

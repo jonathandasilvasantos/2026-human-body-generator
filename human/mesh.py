@@ -1138,6 +1138,63 @@ def build_pupils(bones, shape=None) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
+def build_collarette(bones, shape=None) -> SkinnedMesh:
+    """Faint darker ring inside the iris -- the iris collarette.
+
+    Real irises have a visible boundary between the pupillary zone and
+    the ciliary zone (the collarette) that breaks the colored disc into
+    two concentric textures. Without it the iris reads as a single flat
+    swatch of color. We render it as a slightly-darker disc placed in
+    front of the iris but behind the pupil; the pupil hides its center
+    so only the ring shows.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, r, head_w, head_d = info
+    sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    iris_r = eye_r * IRIS_RATIO
+    coll_r = iris_r * 0.58
+    radii = (coll_r, coll_r, coll_r * 0.16)
+    z_col = z + eye_r * 0.81
+    chunks = [
+        prim.ellipsoid((+sep - conv, y, z_col), radii, head_idx, parent,
+                       rings=5, radial=14),
+        prim.ellipsoid((-sep + conv, y, z_col), radii, head_idx, parent,
+                       rings=5, radial=14),
+    ]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_caruncle(bones, shape=None) -> SkinnedMesh:
+    """Small flesh-pink lacrimal caruncle at the medial canthus.
+
+    The fleshy bump where the upper and lower eyelids meet at the inner
+    eye corner. Tiny but very recognisable -- its absence is one of the
+    things that makes simple CG eyes look mannequin-like.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, r, head_w, head_d = info
+    sep, y, z, eye_r, _conv = _eye_metrics(length, head_d)
+    # Sit just medial of the eyeball, slightly forward of the eye center.
+    cx = sep - eye_r * 0.95
+    cy = y - eye_r * 0.05
+    cz = z + eye_r * 0.55
+    cr = eye_r * 0.18
+    radii = (cr * 0.55, cr * 0.55, cr * 0.45)
+    chunks = [
+        prim.ellipsoid((+cx, cy, cz), radii, head_idx, parent, rings=4, radial=10),
+        prim.ellipsoid((-cx, cy, cz), radii, head_idx, parent, rings=4, radial=10),
+    ]
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
 def build_catchlights(bones, shape=None) -> SkinnedMesh:
     """Small specular catchlights on the upper-outer iris of each eye.
 
