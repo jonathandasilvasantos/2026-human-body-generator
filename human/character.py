@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from . import accessories
+from . import face_anim
 from . import garments
 from . import mesh as mesh_mod
 from . import renderer
@@ -96,6 +97,12 @@ class Appearance:
     expression: str = "neutral"
     age_group: str = "adult"
     crease_color: Color = (0.30, 0.18, 0.13)
+
+    # ARKit-52 blendshape overrides (FACS-aligned). When non-empty, each
+    # entry is layered on top of the named ``expression`` preset, so you
+    # can do ``expression="smile", blendshapes={"eyeBlinkLeft": 1.0}``
+    # to get a smiling left-eye wink. See ``human/face_anim.py``.
+    blendshapes: Optional[dict] = None
 
     # top
     top_style: str   = "tshirt"       # tshirt / longsleeve / tank / dress
@@ -312,15 +319,20 @@ class Character:
             min(1.0, _EYE_WHITE[1] + (app.seed - 0.5) * 0.02),
             min(1.0, _EYE_WHITE[2] - (app.seed - 0.5) * 0.02),
         )
+        # Resolve face into ARKit-52 weight vector once per build.
+        face_w = face_anim.FaceRig.resolve(app)
+
         add(mesh_mod.build_eyes(self.bones, self.shape),       sclera,         3)
         add(mesh_mod.build_limbus(self.bones, self.shape),     _EYE_LIMBUS,    3)
-        add(mesh_mod.build_iris(self.bones, self.shape),       app.eye_color,  3)
+        add(mesh_mod.build_iris(self.bones, self.shape, face_w), app.eye_color, 3)
         # Collarette: faintly darker ring inside the iris -- breaks the
         # colored disc into pupillary + ciliary zones the way a real
         # iris does.
         collarette = tuple(c * 0.55 for c in app.eye_color)
-        add(mesh_mod.build_collarette(self.bones, self.shape), collarette,     3)
-        add(mesh_mod.build_pupils(self.bones, self.shape),     app.pupil_color, 3)
+        add(mesh_mod.build_collarette(self.bones, self.shape, face_w),
+            collarette, 3)
+        add(mesh_mod.build_pupils(self.bones, self.shape, face_w),
+            app.pupil_color, 3)
         # Lacrimal caruncle (flesh-pink tear-duct bump at medial canthus).
         # Tinted off the character's skin tone so it tracks body color.
         caruncle = (
@@ -329,10 +341,11 @@ class Character:
             min(1.0, app.skin_color[2] * 0.58),
         )
         add(mesh_mod.build_caruncle(self.bones, self.shape),   caruncle,       0)
-        add(mesh_mod.build_catchlights(self.bones, self.shape), _EYE_CATCH,    3)
-        add(mesh_mod.build_eyelids(self.bones, self.shape, app.expression),
+        add(mesh_mod.build_catchlights(self.bones, self.shape, face_w),
+            _EYE_CATCH, 3)
+        add(mesh_mod.build_eyelids(self.bones, self.shape, face_w),
             app.skin_color, 0)
-        add(mesh_mod.build_lips(self.bones, self.shape, app.expression),
+        add(mesh_mod.build_lips(self.bones, self.shape, face_w),
             app.lip_color, 0)
 
         # Age-dependent creases (forehead / nasolabial / crows'-feet). No-op
@@ -343,7 +356,7 @@ class Character:
 
         # hair + eyebrows
         add(accessories.build_hair(self.bones, app.hair_style), app.hair_color, 2)
-        add(accessories.build_eyebrows(self.bones),             app.eyebrow_color, 2)
+        add(accessories.build_eyebrows(self.bones, face_w),     app.eyebrow_color, 2)
         add(accessories.build_facial_hair(self.bones, app.facial_hair_style),
             app.facial_hair_color, 2)
 
