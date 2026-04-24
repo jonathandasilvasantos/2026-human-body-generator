@@ -3,7 +3,9 @@
 import math
 import os
 import random
+import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +13,7 @@ import glfw
 from OpenGL.GL import *
 
 from . import animation as anim_mod
-from . import mathx, renderer, skeleton
+from . import audio_lipsync, mathx, renderer, skeleton
 from .character import Character, random_appearance, reroll_clothes
 
 
@@ -25,6 +27,8 @@ from .text_overlay import TextOverlay
 
 
 ANIMATIONS_DIR = Path(__file__).resolve().parent.parent / "animations"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+VOICE_WAV = PROJECT_ROOT / "voice.wav"
 
 
 def _scan_animations(startup_path: str | None):
@@ -90,6 +94,14 @@ class Viewer:
         self.bvh_animation: anim_mod.Animation | None = None
         self._t_anim = 0.0
         self._expr_index = 0
+
+        # Audio-driven lip sync (K key). Track is analysed lazily on first
+        # activation so startup cost is not paid when the feature is unused.
+        self._lipsync_track: audio_lipsync.LipsyncTrack | None = None
+        self._lipsync_t0: float | None = None
+        self._lipsync_proc: subprocess.Popen | None = None
+        self._lipsync_saved_expression: str | None = None
+        self._lipsync_last_weights: dict[str, float] = {}
         self._camera_default = (0.0, 0.18, 0.0, 2.7, 0.0, 0.08)
 
         # Animation library: every .bvh under ./animations is cyclable.
@@ -267,7 +279,10 @@ class Viewer:
         elif key == glfw.KEY_W:
             self.walking = not self.walking
         elif key == glfw.KEY_K:
-            # K: toggle BVH playback (was A).
+            # K: play ./voice.wav with audio-driven lip sync.
+            self._toggle_lipsync()
+        elif key == glfw.KEY_J:
+            # J: toggle BVH playback (moved off K, which now drives lipsync).
             if self.bvh_animation is not None:
                 self.bvh_animation = None
                 print("[bvh] disabled; use procedural walk (W)")
@@ -318,6 +333,106 @@ class Viewer:
         self.show_bones = False
         self._expr_index = 0
         self._regenerate_all()
+
+    # ---- audio-driven lip sync -------------------------------------------
+
+    def _toggle_lipsync(self):
+        if self._lipsync_t0 is not None:
+            self._stop_lipsync()
+            return
+        if not VOICE_WAV.is_file():
+            print(f"[lipsync] missing {VOICE_WAV}")
+            return
+        if self._lipsync_track is None:
+            print(f"[lipsync] analysing {VOICE_WAV.name} ...")
+            try:
+                self._lipsync_track = audio_lipsync.from_wav(str(VOICE_WAV))
+            except Exception as e:
+                print(f"[lipsync] analysis failed: {e}")
+                return
+            print(f"[lipsync] {self._lipsync_track.duration:.2f}s, "
+                  f"{len(self._lipsync_track.viseme_track.segments)} segments")
+        # Spawn afplay (macOS) or aplay (linux) as a non-blocking subprocess.
+        cmd = self._audio_cmd()
+        if cmd is None:
+            print("[lipsync] no audio player found; animating silently")
+            self._lipsync_proc = None
+        else:
+            try:
+                self._lipsync_proc = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                print(f"[lipsync] audio player failed: {e}")
+                self._lipsync_proc = None
+        self._lipsync_saved_expression = self.character.appearance.expression
+        # Neutral base so emotion presets don't fight the viseme weights.
+        self.character.set_appearance(
+            replace(self.character.appearance,
+                    expression="neutral", blendshapes={}))
+        self.character.build_gpu()
+        self._lipsync_t0 = time.perf_counter()
+        print("[lipsync] playing")
+
+    @staticmethod
+    def _audio_cmd():
+        for exe in ("/usr/bin/afplay", "/usr/bin/aplay", "/usr/bin/paplay"):
+            if os.path.isfile(exe):
+                return [exe, str(VOICE_WAV)]
+        return None
+
+    def _stop_lipsync(self):
+        if self._lipsync_proc is not None:
+            try:
+                self._lipsync_proc.terminate()
+            except Exception:
+                pass
+            self._lipsync_proc = None
+        if self._lipsync_saved_expression is not None:
+            self.character.set_appearance(
+                replace(self.character.appearance,
+                        expression=self._lipsync_saved_expression,
+                        blendshapes={}))
+            self.character.build_gpu()
+            self._lipsync_saved_expression = None
+        self._lipsync_t0 = None
+        self._lipsync_last_weights = {}
+        print("[lipsync] stopped")
+
+    def _tick_lipsync(self) -> bool:
+        """Update face blendshapes from the audio track.
+
+        Returns True when the clip has ended.
+        """
+        if self._lipsync_t0 is None or self._lipsync_track is None:
+            return False
+        t = time.perf_counter() - self._lipsync_t0
+        if t >= self._lipsync_track.duration + 0.1:
+            return True
+        weights = self._lipsync_track.sample(max(0.0, t))
+        # Snap very-small weights to zero so we don't rebuild geometry for
+        # sub-visible motion; small threshold preserves tail decay.
+        weights = {k: v for k, v in weights.items() if v > 0.01}
+        # Skip the full face rebuild when no channel has changed by more
+        # than ~2%. build_gpu() rebuilds every drawable on the character
+        # (measured ~35 ms on this machine); guarding it frees budget for
+        # audio-to-display sync when the mouth is coasting between
+        # visemes. Audio clock drives sampling, so this never desyncs.
+        if self._weights_similar(self._lipsync_last_weights, weights):
+            return False
+        self._lipsync_last_weights = weights
+        app = self.character.appearance
+        self.character.appearance = replace(app, blendshapes=weights)
+        self.character.build_gpu()
+        return False
+
+    @staticmethod
+    def _weights_similar(a: dict, b: dict, eps: float = 0.02) -> bool:
+        keys = set(a) | set(b)
+        for k in keys:
+            if abs(a.get(k, 0.0) - b.get(k, 0.0)) > eps:
+                return False
+        return True
 
     # ---- per frame --------------------------------------------------------
 
@@ -456,6 +571,8 @@ class Viewer:
                 prev = now
 
                 self._tick_animation(dt)
+                if self._tick_lipsync():
+                    self._stop_lipsync()
 
                 w, h = glfw.get_framebuffer_size(self.win)
                 if h > 0:
