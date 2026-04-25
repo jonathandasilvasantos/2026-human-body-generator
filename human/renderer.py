@@ -173,6 +173,14 @@ void main() {
         * (1.0 - smoothstep(0.145, 0.210, abs(v_local.x)))
         * smoothstep(0.000, 0.040, v_local.y)
         * (1.0 - smoothstep(0.245, 0.340, v_local.y));
+    float ear_thin = smoothstep(0.085, 0.115, abs(v_local.x))
+        * (1.0 - smoothstep(0.135, 0.175, abs(v_local.x)))
+        * smoothstep(0.075, 0.115, v_local.y)
+        * (1.0 - smoothstep(0.170, 0.225, v_local.y))
+        * (1.0 - smoothstep(0.020, 0.075, abs(v_local.z + 0.010)));
+    float nose_feature = ellipse_mask(v_local.xy, vec2(0.000, 0.108),
+                                      vec2(0.034, 0.052)) * skin_front;
+    float facial_detail_gate = max(skin_front, max(nose_feature, ear_thin) * 0.85);
     float skin_micro = 0.0;
 
     if (u_mode == 0) {
@@ -182,7 +190,7 @@ void main() {
         // 2) broad melanin/undertone variation plus regional hemoglobin;
         // 3) pores and shallow meso folds through normal perturbation;
         // 4) roughness/spec response coupled to the microstructure.
-        n = perturb_skin_normal(n_base, v_local, skin_front);
+        n = perturb_skin_normal(n_base, v_local, facial_detail_gate);
 
         float melanin = fbm(sample_p * 4.0) - 0.5;
         float undertone = fbm(sample_p * vec3(2.0, 5.0, 3.0) + vec3(5.0)) - 0.5;
@@ -195,18 +203,20 @@ void main() {
             ellipse_mask(face_xy, vec2(-0.047, 0.105), vec2(0.045, 0.046)),
             ellipse_mask(face_xy, vec2( 0.047, 0.105), vec2(0.045, 0.046))
         );
-        float nose = ellipse_mask(face_xy, vec2(0.000, 0.112), vec2(0.030, 0.055));
+        float nose_flush = ellipse_mask(face_xy, vec2(0.000, 0.112), vec2(0.030, 0.055));
         float eyelid = max(
             ellipse_mask(face_xy, vec2(-0.046, 0.134), vec2(0.035, 0.020)),
             ellipse_mask(face_xy, vec2( 0.046, 0.134), vec2(0.035, 0.020))
         );
         float mouth = ellipse_mask(face_xy, vec2(0.000, 0.070), vec2(0.060, 0.020));
-        float hemo_patch = clamp(cheek * 0.42 + nose * 0.30
+        float hemo_patch = clamp(cheek * 0.42 + nose_flush * 0.34
             + eyelid * 0.22 + mouth * 0.18, 0.0, 1.0) * skin_front;
         float hemo_noise = smoothstep(0.25, 0.88,
             fbm(sample_p * 24.0 + vec3(1.0, 4.0, 9.0)));
         albedo = mix(albedo, albedo * vec3(1.13, 0.86, 0.82),
                      hemo_patch * (0.55 + 0.45 * hemo_noise));
+        albedo = mix(albedo, albedo * vec3(1.10, 0.84, 0.80),
+                     ear_thin * 0.28);
 
         float freckle_n = fbm(sample_p * 74.0 + vec3(11.0, 2.0, 5.0));
         float freckles = smoothstep(0.82, 0.96, freckle_n) * skin_front;
@@ -449,13 +459,15 @@ void main() {
         vec3 H = normalize(L1 + V);
         float rough_var = fbm(sample_p * 28.0 + vec3(2.0, 6.0, 3.0));
         float roughness = clamp(0.46 + 0.20 * rough_var
-            - 0.08 * skin_front + 0.06 * skin_micro, 0.32, 0.78);
+            - 0.08 * skin_front - 0.04 * nose_feature - 0.03 * ear_thin
+            + 0.06 * skin_micro, 0.32, 0.78);
         float gloss = (u_mode == 3) ? 96.0 : mix(72.0, 22.0, roughness);
         float strength = (u_mode == 3) ? 0.20 : mix(0.105, 0.045, roughness);
         float spec = pow(max(dot(n, H), 0.0), gloss);
         c += strength * spec * vec3(1.0, 0.97, 0.93);
         if (u_mode == 0) {
-            float scatter = pow(max(dot(-L1, n_base), 0.0), 2.0) * skin_front;
+            float scatter = pow(max(dot(-L1, n_base), 0.0), 2.0)
+                * max(skin_front, ear_thin * 0.80);
             c += scatter * 0.035 * albedo * vec3(1.18, 0.56, 0.44);
         }
     } else if (u_mode == 1 && u_material == 2) {
