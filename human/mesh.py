@@ -739,6 +739,8 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
         # and a bit deeper at the crown so the profile shows a true skull.
         if t >= 0:
             rz_f = head_d * (0.98 - 0.18 * t * t)     # forehead slopes back
+            forehead_plane = max(0.0, 1.0 - abs(t - 0.38) * 3.2)
+            rz_f *= 1.0 - 0.050 * forehead_plane
         else:
             rz_f = head_d * max(0.95 + 0.12 * t, 0.74)  # chin shallower
         if t >= 0:
