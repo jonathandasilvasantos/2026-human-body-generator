@@ -13,7 +13,7 @@ import glfw
 from OpenGL.GL import *
 
 from . import animation as anim_mod
-from . import audio_lipsync, mathx, renderer, skeleton
+from . import audio_lipsync, lighting, mathx, renderer, skeleton
 from .character import Character, random_appearance, reroll_clothes
 
 
@@ -102,6 +102,8 @@ class Viewer:
         self._lipsync_proc: subprocess.Popen | None = None
         self._lipsync_saved_expression: str | None = None
         self._lipsync_last_weights: dict[str, float] = {}
+
+        self._lighting_index = 0  # key 0 = default Portrait profile
         self._camera_default = (0.0, 0.18, 0.0, 2.7, 0.0, 0.08)
 
         # Animation library: every .bvh under ./animations is cyclable.
@@ -191,7 +193,9 @@ class Viewer:
         return f"anim [{self.anim_index + 1}/{len(self.anim_paths)}]  {name}"
 
     def _update_label(self):
-        self.text_overlay.set_text(self._current_anim_label())
+        prof = lighting.by_index(self._lighting_index)
+        self.text_overlay.set_text(
+            f"{self._current_anim_label()}    light [{self._lighting_index}] {prof.name}")
 
     def _regenerate_all(self, gender: str | None = None):
         shape = skeleton.random_shape(gender=gender)
@@ -300,8 +304,16 @@ class Viewer:
             self._cycle_animation(+1)
         elif key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
             self._cycle_animation(-1)
+        elif glfw.KEY_0 <= key <= glfw.KEY_9:
+            self._set_lighting(key - glfw.KEY_0)
 
     # ---- commands ---------------------------------------------------------
+
+    def _set_lighting(self, index: int):
+        self._lighting_index = index % len(lighting.PROFILES)
+        prof = lighting.by_index(self._lighting_index)
+        print(f"[lighting] {self._lighting_index}  {prof.name}: {prof.description}")
+        self._update_label()
 
     def _cycle_expression(self, step: int):
         self._expr_index = (self._expr_index + step) % len(EXPRESSION_CYCLE)
@@ -469,6 +481,7 @@ class Viewer:
         app = self.character.appearance
         glUniform1f(self.skin_prog.u_seed, float(app.seed))
         glUniform1i(self.skin_prog.u_light_style, 0)
+        lighting.apply(self.skin_prog, lighting.by_index(self._lighting_index))
         glUniform1i(self.skin_prog.u_print_style, int(app.print_style))
         glUniform1f(self.skin_prog.u_print_strength, float(app.print_strength))
         glUniform1i(self.skin_prog.u_stamp_style, int(app.stamp_style))

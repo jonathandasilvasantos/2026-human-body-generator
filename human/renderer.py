@@ -70,7 +70,32 @@ out vec4 frag;
 uniform vec3  u_color;
 uniform int   u_mode;   // 0 = skin, 1 = fabric, 2 = hair, 3 = eye, 4 = shoe
 uniform float u_seed;   // per-character random seed in [0,1]
-uniform int   u_light_style; // 0=portrait 1=soft 2=raking 3=warm/cool
+// Legacy single-int profile id, retained for tooling that has not been
+// updated to the per-light pipeline. Ignored when u_num_lights > 0.
+uniform int   u_light_style;
+// Lighting profile (LightingProfile in human/lighting.py). Up to 16
+// directional lights, a hemispheric ambient (top sky / bottom ground),
+// an exposure / contrast / tint grade, and a configurable rim term.
+// References:
+//   - Hoffman (2010) "Background: Physics and Math of Shading" --
+//     wrapped diffuse for forgiving fill on faces.
+//   - Narkowicz (2015) ACES-fit filmic curve -- tone-mapping below.
+//   - Goldman & Sloan (2019) "Cinematography for Real-Time Rendering" --
+//     three-point + rim conventions.
+const int MAX_LIGHTS = 16;
+uniform int   u_num_lights;
+uniform vec3  u_light_dir[MAX_LIGHTS];   // normalised world-space directions
+uniform vec3  u_light_col[MAX_LIGHTS];   // colour * intensity (linear)
+uniform float u_light_wrap;              // 0 = Lambert, 1 = strong wrap
+uniform vec3  u_amb_top;                 // hemisphere upper colour
+uniform vec3  u_amb_bot;                 // hemisphere lower colour
+uniform float u_exposure;                // linear pre-tonemap multiplier
+uniform float u_contrast;                // post-tonemap contrast lift
+uniform vec3  u_tint;                    // multiplicative grade
+uniform float u_rim_strength;
+uniform vec3  u_rim_color;
+uniform float u_spec_mul;                // master specular gain
+uniform float u_face_fill;               // skin-readability fill amount
 // Clothing pattern controls (per-character; Python-driven for guaranteed
 // variety instead of hash-gated). 0 means "no effect".
 uniform int   u_print_style;    // 0=none 1=stripes 2=dots 3=plaid 4=noise
@@ -420,43 +445,52 @@ void main() {
         albedo *= 0.97 + 0.04 * limbal;
     }
 
-    vec3 L1 = normalize(vec3(0.4, 0.8, 0.6));
-    vec3 L2 = normalize(vec3(-0.5, 0.3, -0.4));
-    vec3 C1 = vec3(1.0, 0.96, 0.90);
-    vec3 C2 = vec3(0.70, 0.78, 1.0);
-    float ambient = 0.46;
-    if (u_light_style == 1) {
-        L1 = normalize(vec3(0.0, 0.65, 0.76));
-        L2 = normalize(vec3(-0.25, 0.55, 0.30));
-        C1 = vec3(0.98, 0.98, 1.0);
-        C2 = vec3(0.75, 0.82, 0.95);
-        ambient = 0.54;
-    } else if (u_light_style == 2) {
-        L1 = normalize(vec3(0.95, 0.28, 0.16));
-        L2 = normalize(vec3(-0.25, 0.45, -0.55));
-        C1 = vec3(1.0, 0.92, 0.84);
-        C2 = vec3(0.55, 0.62, 0.82);
-        ambient = 0.34;
-    } else if (u_light_style == 3) {
-        L1 = normalize(vec3(-0.40, 0.70, 0.55));
-        L2 = normalize(vec3(0.55, 0.35, -0.48));
-        C1 = vec3(1.0, 0.78, 0.58);
-        C2 = vec3(0.48, 0.62, 1.0);
-        ambient = 0.42;
+    // Resolve lighting from the profile uniforms. The first light is the
+    // canonical "key" used by all specular paths so highlight direction
+    // tracks the dominant source even with N>1 lights.
+    int n_lights = max(u_num_lights, 1);
+    vec3 L1;
+    vec3 C1;
+    if (u_num_lights > 0) {
+        L1 = normalize(u_light_dir[0]);
+        C1 = u_light_col[0];
+    } else {
+        // Legacy fallback when no profile has been bound (e.g. unit tests).
+        L1 = normalize(vec3(0.4, 0.8, 0.6));
+        C1 = vec3(1.0, 0.96, 0.90);
     }
-
-    float ndl1 = max(dot(n, L1), 0.0);
-    float ndl2 = max(dot(n, L2), 0.0);
-    if (u_mode == 0) {
-        ndl1 = clamp((dot(n, L1) + 0.32) / 1.32, 0.0, 1.0);
-        ndl2 = clamp((dot(n, L2) + 0.22) / 1.22, 0.0, 1.0);
+    vec3 light = vec3(0.0);
+    float wrap = clamp(u_light_wrap, 0.0, 1.0);
+    for (int i = 0; i < MAX_LIGHTS; ++i) {
+        if (i >= n_lights) break;
+        vec3 L = (u_num_lights > 0) ? normalize(u_light_dir[i])
+                                    : ((i == 0) ? L1 : vec3(0.0));
+        vec3 C = (u_num_lights > 0) ? u_light_col[i]
+                                    : ((i == 0) ? C1 : vec3(0.0));
+        float ndl = dot(n, L);
+        // Wrapped diffuse (Hoffman 2010): widens the lit hemisphere so
+        // soft beauty / IBL profiles don't terminate hard like a single
+        // directional light.
+        ndl = clamp((ndl + wrap) / (1.0 + wrap), 0.0, 1.0);
+        // Skin needs a tiny lift even on the shadow side so cavities
+        // (eye, nostril, lip line) read on darker complexions.
+        if (u_mode == 0) {
+            ndl = clamp((dot(n, L) + 0.32) / 1.32, 0.0, 1.0);
+            ndl = mix(ndl, clamp((dot(n, L) + wrap) / (1.0 + wrap), 0.0, 1.0),
+                      0.5);
+        }
+        light += C * ndl;
     }
-    vec3 light = C1 * ndl1 * 0.88 + C2 * ndl2 * 0.32 + vec3(ambient);
-    if (u_mode == 0) {
-        // Face readability: keep a soft skin-only fill so darker skin tones
-        // and eye/nose/mouth cavities do not collapse under portrait light.
+    // Hemispheric ambient (Driscoll 2002 / Ramamoorthi 2001 SH approx):
+    // top sky colour, bottom ground colour, blended on world-up.
+    float hemi_t = 0.5 + 0.5 * n.y;
+    light += mix(u_amb_bot, u_amb_top, hemi_t);
+    if (u_mode == 0 && u_face_fill > 0.0) {
+        // Face readability fill: scaled per profile so noir/split can
+        // collapse it for hard half-shadow, while studio beauty keeps
+        // the cavities open.
         float skin_luma = dot(u_color, vec3(0.299, 0.587, 0.114));
-        light += vec3(0.10 + 0.28 * (1.0 - skin_luma));
+        light += vec3(u_face_fill * (0.5 + 0.5 * (1.0 - skin_luma)));
     }
     vec3 c = albedo * light;
 
@@ -472,7 +506,7 @@ void main() {
         float gloss = (u_mode == 3) ? 96.0 : mix(72.0, 22.0, roughness);
         float strength = (u_mode == 3) ? 0.20 : mix(0.105, 0.045, roughness);
         float spec = pow(max(dot(n, H), 0.0), gloss);
-        c += strength * spec * vec3(1.0, 0.97, 0.93);
+        c += u_spec_mul * strength * spec * C1;
         if (u_mode == 0) {
             float scatter = pow(max(dot(-L1, n_base), 0.0), 2.0)
                 * max(skin_front, ear_thin * 0.80);
@@ -527,7 +561,18 @@ void main() {
 
     float rim = pow(1.0 - max(dot(n, normalize(-v_pos)), 0.0), 3.0);
     float rim_k = (u_mode == 0) ? 0.055 : ((u_mode == 2) ? 0.10 : ((u_mode == 3) ? 0.06 : 0.05));
+    // Profile-driven rim layered on top of the per-material baseline so
+    // styles can dial in a strong kicker without breaking material feel.
     c += rim_k * rim * vec3(1.0, 0.85, 0.7);
+    c += u_rim_strength * rim * u_rim_color;
+
+    // Filmic tone-map (Narkowicz 2015 ACES fit) -- preserves mid-tones,
+    // rolls highlights softly, behaves better than Reinhard for skin.
+    c = max(vec3(0.0), c * u_exposure);
+    c = (c * (2.51 * c + vec3(0.03))) / (c * (2.43 * c + vec3(0.59)) + vec3(0.14));
+    // Contrast lift around 0.5 (gray pivot, post-tonemap).
+    c = clamp(mix(vec3(0.5), c, 1.0 + u_contrast), 0.0, 1.0);
+    c *= u_tint;
     frag = vec4(c, 1.0);
 }
 """
@@ -585,6 +630,20 @@ class SkinProgram:
         self.u_stamp_strength = glGetUniformLocation(self.prog, "u_stamp_strength")
         self.u_material       = glGetUniformLocation(self.prog, "u_material")
         self.u_bend_inflate   = glGetUniformLocation(self.prog, "u_bend_inflate")
+        # Lighting profile uniforms (see human/lighting.py).
+        self.u_num_lights   = glGetUniformLocation(self.prog, "u_num_lights")
+        self.u_light_dir    = glGetUniformLocation(self.prog, "u_light_dir")
+        self.u_light_col    = glGetUniformLocation(self.prog, "u_light_col")
+        self.u_light_wrap   = glGetUniformLocation(self.prog, "u_light_wrap")
+        self.u_amb_top      = glGetUniformLocation(self.prog, "u_amb_top")
+        self.u_amb_bot      = glGetUniformLocation(self.prog, "u_amb_bot")
+        self.u_exposure     = glGetUniformLocation(self.prog, "u_exposure")
+        self.u_contrast     = glGetUniformLocation(self.prog, "u_contrast")
+        self.u_tint         = glGetUniformLocation(self.prog, "u_tint")
+        self.u_rim_strength = glGetUniformLocation(self.prog, "u_rim_strength")
+        self.u_rim_color    = glGetUniformLocation(self.prog, "u_rim_color")
+        self.u_spec_mul     = glGetUniformLocation(self.prog, "u_spec_mul")
+        self.u_face_fill    = glGetUniformLocation(self.prog, "u_face_fill")
 
 
 class LineProgram:
