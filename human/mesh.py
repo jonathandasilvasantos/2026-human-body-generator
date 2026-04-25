@@ -1779,6 +1779,23 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
             thickness=0.0007,
         ))
 
+    if brow_raise > 0.08:
+        # Frontalis brow raise produces shallow transverse forehead folds.
+        # Keep them short and expression-only so young neutral faces stay
+        # smooth while surprise/fear still compress the upper forehead.
+        for yoff, scale in ((0.046, 0.84), (0.078, 1.0)):
+            chunks.append(prim.flat_patch(
+                (0.0,
+                 length * (H_BROW + yoff),
+                 head_d * 0.900),
+                (length * (0.082 + 0.018 * brow_raise) * scale,
+                 length * 0.0020),
+                head_idx, parent,
+                normal=(0.0, 0.04, 1.0),
+                subdiv=(8, 1),
+                thickness=0.00065,
+            ))
+
     if m["chin_tension"] > 0.06:
         chunks.append(prim.flat_patch(
             (0.0, length * (0.236 - 0.012 * m["jaw_open"]), head_d * 0.850),
