@@ -215,6 +215,14 @@ void main() {
             fbm(sample_p * 24.0 + vec3(1.0, 4.0, 9.0)));
         albedo = mix(albedo, albedo * vec3(1.13, 0.86, 0.82),
                      hemo_patch * (0.55 + 0.45 * hemo_noise));
+        float malar_l = ellipse_mask(face_xy, vec2(-0.060, 0.118), vec2(0.040, 0.020));
+        float malar_r = ellipse_mask(face_xy, vec2( 0.060, 0.118), vec2(0.040, 0.020));
+        float under_malar_l = ellipse_mask(face_xy, vec2(-0.064, 0.094), vec2(0.046, 0.017));
+        float under_malar_r = ellipse_mask(face_xy, vec2( 0.064, 0.094), vec2(0.046, 0.017));
+        float malar = max(malar_l, malar_r) * skin_front;
+        float under_malar = max(under_malar_l, under_malar_r) * skin_front;
+        albedo = mix(albedo, albedo * vec3(1.035, 1.015, 0.985), malar * 0.08);
+        albedo = mix(albedo, albedo * vec3(0.91, 0.89, 0.88), under_malar * 0.10);
         albedo = mix(albedo, albedo * vec3(1.10, 0.84, 0.80),
                      ear_thin * 0.28);
 
