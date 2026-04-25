@@ -98,6 +98,7 @@ def capture(
     bg=(0.09, 0.10, 0.13, 1.0),
     bvh_path=None,
     bvh_time=0.5,
+    fov_deg=55.0,
 ):
     if seed is not None:
         random.seed(seed)
@@ -138,7 +139,7 @@ def capture(
     glViewport(0, 0, width, height)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-    proj = mathx.perspective(math.radians(55), width / max(height, 1), 0.1, 50.0)
+    proj = mathx.perspective(math.radians(fov_deg), width / max(height, 1), 0.1, 50.0)
     view = _camera_view(target=target, dist=dist, yaw=yaw, pitch=pitch)
     bone_mats = character.bone_matrices()
 
@@ -200,6 +201,10 @@ def main():
     ap.add_argument("--yaw", type=float, default=0.0)
     ap.add_argument("--pitch", type=float, default=0.08)
     ap.add_argument("--dist", type=float, default=2.65)
+    ap.add_argument("--target-x", dest="tx", type=float, default=0.0)
+    ap.add_argument("--target-y", dest="ty", type=float, default=-0.20)
+    ap.add_argument("--target-z", dest="tz", type=float, default=0.0)
+    ap.add_argument("--fov", type=float, default=55.0)
     args = ap.parse_args()
     capture(
         out_path=args.out,
@@ -211,8 +216,10 @@ def main():
         yaw=args.yaw,
         pitch=args.pitch,
         dist=args.dist,
+        target=(args.tx, args.ty, args.tz),
         bvh_path=args.bvh_path,
         bvh_time=args.bvh_time,
+        fov_deg=args.fov,
     )
 
 
