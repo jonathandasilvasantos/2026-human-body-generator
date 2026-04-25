@@ -415,6 +415,12 @@ class Character:
         # ARKit blendshape weights below.
         self.shape.age_group = app.age_group
         add(mesh_mod.build(self.bones, self.shape), app.skin_color, 0)
+        inner_ear = (
+            min(1.0, app.skin_color[0] * 0.80 + 0.04),
+            min(1.0, app.skin_color[1] * 0.78),
+            min(1.0, app.skin_color[2] * 0.76),
+        )
+        add(mesh_mod.build_ear_detail(self.bones, self.shape), inner_ear, 0)
 
         # eyes -- back-to-front so each layer can be drawn opaque without
         # losing the one behind it: sclera, limbal ring, iris, pupil,

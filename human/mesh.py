@@ -850,9 +850,10 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
 
     # --- Ears -------------------------------------------------------------
     # Ear top aligned roughly with the brow line, bottom around the nose
-    # base -- the canonical anatomical positioning. Built from two pieces
-    # per side: a helix (outer rim) and a lobe. They hug the skull and
-    # tilt back slightly so they read correctly in profile.
+    # base -- the canonical anatomical positioning. Built from landmark
+    # pieces: outer helix, inner antihelix/concha ridge, tragus, and lobe.
+    # The parts hug the skull and tilt back slightly so profile reads as a
+    # pinna rather than a flat oval.
     ear_top_y = length * (H_BROW - 0.01)
     ear_bot_y = length * (H_NOSE_BASE - 0.01)
     ear_cy = 0.5 * (ear_top_y + ear_bot_y)
@@ -863,13 +864,28 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
         # Helix: tall narrow vertical capsule that forms the outer rim.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_cy + ear_half_h * 0.05, ear_cz),
-            (length * 0.014, ear_half_h * 1.02, length * 0.045),
+            (length * 0.012, ear_half_h * 1.04, length * 0.045),
             head_idx, parent_idx, rings=10, radial=14,
+        ))
+        # Antihelix / concha rim: smaller raised inner fold set slightly
+        # forward and inward from the helix.
+        chunks.append(prim.ellipsoid(
+            (side * (ear_x - length * 0.012), ear_cy + ear_half_h * 0.06,
+             ear_cz + length * 0.008),
+            (length * 0.0065, ear_half_h * 0.62, length * 0.020),
+            head_idx, parent_idx, rings=8, radial=10,
+        ))
+        # Tragus: small knob in front of the concha, near the canal.
+        chunks.append(prim.ellipsoid(
+            (side * (ear_x - length * 0.018), ear_cy - ear_half_h * 0.22,
+             ear_cz + length * 0.020),
+            (length * 0.008, length * 0.012, length * 0.011),
+            head_idx, parent_idx, rings=6, radial=10,
         ))
         # Lobe: small bulb at the bottom, slightly protruding forward.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_bot_y - length * 0.002, ear_cz + length * 0.006),
-            (length * 0.016, length * 0.018, length * 0.026),
+            (length * 0.014, length * 0.017, length * 0.024),
             head_idx, parent_idx, rings=8, radial=12,
         ))
 
@@ -1034,6 +1050,41 @@ def _head_info(bones, shape=None):
     head_d = length * 0.385
     head_w = length * 0.335 * (1.05 if gender == "male" else 0.99)
     return head_idx, parent, R, length, r, head_w, head_d
+
+
+def build_ear_detail(bones, shape=None) -> SkinnedMesh:
+    """Soft concha shadows for the procedural pinna.
+
+    The main head mesh carries raised ear geometry. These very thin patches
+    add the recessed concha/canal value change that geometry alone cannot
+    express at this low polygon budget.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, head_w, head_d = info
+
+    ear_top_y = length * (H_BROW - 0.01)
+    ear_bot_y = length * (H_NOSE_BASE - 0.01)
+    ear_cy = 0.5 * (ear_top_y + ear_bot_y)
+    ear_half_h = 0.5 * (ear_top_y - ear_bot_y)
+    ear_cz = -head_d * 0.04
+    ear_x = head_w * 0.93
+    chunks = []
+    for side in (+1.0, -1.0):
+        chunks.append(prim.flat_patch(
+            (side * (ear_x + length * 0.006), ear_cy - ear_half_h * 0.02,
+             ear_cz + length * 0.007),
+            (length * 0.014, ear_half_h * 0.30),
+            head_idx, parent,
+            normal=(side, 0.0, 0.0),
+            subdiv=(4, 6),
+            thickness=0.0008,
+        ))
+
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
 # Eye geometry constants (factored so eyeball / iris / pupil / limbus /
