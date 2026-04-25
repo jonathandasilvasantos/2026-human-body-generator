@@ -1692,16 +1692,21 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
         orb = m[f"orbicularis_oculi_{suffix}"]
         fold = max(0.0, 0.65 * zyg + 0.55 * sneer + 0.30 * dep)
         if fold > 0.045:
-            chunks.append(prim.flat_patch(
-                (side * length * 0.048,
-                 length * (0.370 - 0.018 * dep + 0.010 * zyg),
-                 head_d * 0.872),
-                (length * 0.0028, length * (0.034 + 0.004 * fold)),
-                head_idx, parent,
-                normal=(side * 0.42, -0.10, 1.0),
-                subdiv=(1, 5),
-                thickness=0.0008,
-            ))
+            for x_base, y_base, seg_len, normal_y in (
+                (0.046, 0.382, 0.022, -0.06),
+                (0.062, 0.342, 0.020, -0.20),
+            ):
+                chunks.append(prim.flat_patch(
+                    (side * length * x_base,
+                     length * (y_base - 0.018 * dep + 0.010 * zyg),
+                     head_d * 0.872),
+                    (length * 0.0026,
+                     length * (seg_len + 0.004 * fold)),
+                    head_idx, parent,
+                    normal=(side * 0.42, normal_y, 1.0),
+                    subdiv=(1, 4),
+                    thickness=0.00075,
+                ))
         mouth_pin = max(dep, m[f"lip_press_{suffix}"], m["mouth_tension"])
         if mouth_pin > 0.055:
             chunks.append(prim.flat_patch(
