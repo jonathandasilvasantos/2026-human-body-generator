@@ -771,7 +771,7 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     ))
 
     # Chin protuberance is carried by the skull shell profile (forward cz
-    # offset at t<-0.5). No floating blob is added here.
+    # offset at t<-0.5). Surface detail below adds the mentolabial cue.
 
     # --- Nose: bridge + tip + alar cartilages ------------------------------
     # The nasal silhouette is built from a narrow bony bridge, paired upper
@@ -1084,6 +1084,34 @@ def build_ear_detail(bones, shape=None) -> SkinnedMesh:
 
     chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
     v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
+
+
+def build_chin_detail(bones, shape=None) -> SkinnedMesh:
+    """Static lower-face crease cue for the mental pad.
+
+    A low-poly skull shell cannot express the small mentolabial break between
+    lower lip and chin without either adding many rings or a floating chin
+    blob. This skin-toned shadow patch provides that anatomical landmark
+    while staying flush to the head surface.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, _head_w, head_d = info
+
+    age = _head_age(shape)
+    strength = 0.80 if age == "elder" else (0.52 if age == "adult" else 0.34)
+    chunk = prim.flat_patch(
+        (0.0, length * (H_MOUTH - 0.058), head_d * 0.858),
+        (length * 0.034, length * 0.0032 * strength),
+        head_idx, parent,
+        normal=(0.0, -0.12, 1.0),
+        subdiv=(6, 1),
+        thickness=0.0008,
+    )
+    v, n, ba, bb, w, idx = chunk
+    v, n = v @ R.T, n @ R.T
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 

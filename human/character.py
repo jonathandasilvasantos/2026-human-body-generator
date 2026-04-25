@@ -421,6 +421,8 @@ class Character:
             min(1.0, app.skin_color[2] * 0.76),
         )
         add(mesh_mod.build_ear_detail(self.bones, self.shape), inner_ear, 0)
+        chin_shadow = tuple(min(1.0, c * 0.82) for c in app.skin_color)
+        add(mesh_mod.build_chin_detail(self.bones, self.shape), chin_shadow, 0)
 
         # eyes -- back-to-front so each layer can be drawn opaque without
         # losing the one behind it: sclera, limbal ring, iris, pupil,
