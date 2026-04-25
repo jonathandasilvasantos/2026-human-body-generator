@@ -773,40 +773,41 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # Chin protuberance is carried by the skull shell profile (forward cz
     # offset at t<-0.5). No floating blob is added here.
 
-    # --- Nose: bridge + tip + wings ---------------------------------------
-    # Bridge: a narrow ellipsoid from the radix (between the eyebrows) down
-    # to just above the tip. Narrower in X than before, and longer in Y so
-    # the nose has a visible bridge line.
-    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.70)
-    bridge_rx = length * (0.020 if gender == "male" else 0.018) * nose_width
-    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.60
-    bridge_rz = length * 0.040 * nose_bridge * nose_proj
+    # --- Nose: bridge + tip + alar cartilages ------------------------------
+    # The nasal silhouette is built from a narrow bony bridge, paired upper
+    # lateral cartilages, tip dome, alar wings, and a small columella. Keeping
+    # those roles separate avoids the stacked-sphere look while preserving the
+    # lightweight procedural mesh.
+    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.72)
+    bridge_rx = length * (0.016 if gender == "male" else 0.014) * nose_width
+    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.68
+    bridge_rz = length * 0.042 * nose_bridge * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, bridge_cy, head_d * (0.84 + 0.03 * nose_proj)),
+        (0.0, bridge_cy, head_d * (0.83 + 0.035 * nose_proj)),
         (bridge_rx, bridge_ry, bridge_rz),
         head_idx, parent_idx, rings=10, radial=12,
     ))
 
-    # Nose tip: rounded bulb at the base of the nose, protruding forward.
-    tip_cy = length * (H_NOSE_BASE + 0.02)
-    tip_rx = length * (0.034 if gender == "male" else 0.031) * nose_width
-    tip_ry = length * 0.030
-    tip_rz = length * 0.040 * nose_proj
+    # Tip dome: smaller and lower than the former bulb, so the alar wings and
+    # bridge define the nose instead of a single round bead.
+    tip_cy = length * (H_NOSE_BASE + 0.018)
+    tip_rx = length * (0.027 if gender == "male" else 0.025) * nose_width
+    tip_ry = length * 0.025
+    tip_rz = length * 0.045 * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, tip_cy, head_d * (0.90 + 0.05 * nose_proj)),
+        (0.0, tip_cy, head_d * (0.895 + 0.058 * nose_proj)),
         (tip_rx, tip_ry, tip_rz),
         head_idx, parent_idx, rings=10, radial=14,
     ))
 
-    # Nostril wings (alae): two small lobes flanking the tip, implying
-    # nostrils without modelling a cavity. Placed slightly behind the tip
-    # so the tip still reads as the forwardmost point.
-    wing_rx = length * 0.018 * nose_width
-    wing_ry = length * 0.017
-    wing_rz = length * 0.024 * nose_proj
-    wing_sep = length * (0.032 if gender == "male" else 0.028) * nose_width
+    # Nostril wings (alae): wider, flatter lateral cartilages wrapping around
+    # the nostril plane. They sit behind the tip rather than forming two balls.
+    wing_rx = length * 0.020 * nose_width
+    wing_ry = length * 0.012
+    wing_rz = length * 0.018 * nose_proj
+    wing_sep = length * (0.030 if gender == "male" else 0.027) * nose_width
     wing_cy = length * (H_NOSE_BASE + 0.005)
-    wing_cz = head_d * (0.86 + 0.03 * nose_proj)
+    wing_cz = head_d * (0.852 + 0.036 * nose_proj)
     chunks += [
         prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
                        (wing_rx, wing_ry, wing_rz),
@@ -815,6 +816,16 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
                        (wing_rx, wing_ry, wing_rz),
                        head_idx, parent_idx, rings=8, radial=12),
     ]
+
+    # Columella: central soft-tissue strut between nostrils, visible in
+    # three-quarter/profile and anchoring the tip to the philtrum.
+    chunks.append(prim.ellipsoid(
+        (0.0, length * (H_NOSE_BASE - 0.012),
+         head_d * (0.865 + 0.036 * nose_proj)),
+        (length * 0.0060 * nose_width, length * 0.011,
+         length * 0.009 * nose_proj),
+        head_idx, parent_idx, rings=7, radial=10,
+    ))
 
     # --- Brow ridge -------------------------------------------------------
     # Subtle supraorbital ridge: two short arched swells above each orbit
@@ -839,9 +850,10 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
 
     # --- Ears -------------------------------------------------------------
     # Ear top aligned roughly with the brow line, bottom around the nose
-    # base -- the canonical anatomical positioning. Built from two pieces
-    # per side: a helix (outer rim) and a lobe. They hug the skull and
-    # tilt back slightly so they read correctly in profile.
+    # base -- the canonical anatomical positioning. Built from landmark
+    # pieces: outer helix, inner antihelix/concha ridge, tragus, and lobe.
+    # The parts hug the skull and tilt back slightly so profile reads as a
+    # pinna rather than a flat oval.
     ear_top_y = length * (H_BROW - 0.01)
     ear_bot_y = length * (H_NOSE_BASE - 0.01)
     ear_cy = 0.5 * (ear_top_y + ear_bot_y)
@@ -852,13 +864,28 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
         # Helix: tall narrow vertical capsule that forms the outer rim.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_cy + ear_half_h * 0.05, ear_cz),
-            (length * 0.014, ear_half_h * 1.02, length * 0.045),
+            (length * 0.012, ear_half_h * 1.04, length * 0.045),
             head_idx, parent_idx, rings=10, radial=14,
+        ))
+        # Antihelix / concha rim: smaller raised inner fold set slightly
+        # forward and inward from the helix.
+        chunks.append(prim.ellipsoid(
+            (side * (ear_x - length * 0.012), ear_cy + ear_half_h * 0.06,
+             ear_cz + length * 0.008),
+            (length * 0.0065, ear_half_h * 0.62, length * 0.020),
+            head_idx, parent_idx, rings=8, radial=10,
+        ))
+        # Tragus: small knob in front of the concha, near the canal.
+        chunks.append(prim.ellipsoid(
+            (side * (ear_x - length * 0.018), ear_cy - ear_half_h * 0.22,
+             ear_cz + length * 0.020),
+            (length * 0.008, length * 0.012, length * 0.011),
+            head_idx, parent_idx, rings=6, radial=10,
         ))
         # Lobe: small bulb at the bottom, slightly protruding forward.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_bot_y - length * 0.002, ear_cz + length * 0.006),
-            (length * 0.016, length * 0.018, length * 0.026),
+            (length * 0.014, length * 0.017, length * 0.024),
             head_idx, parent_idx, rings=8, radial=12,
         ))
 
@@ -1023,6 +1050,41 @@ def _head_info(bones, shape=None):
     head_d = length * 0.385
     head_w = length * 0.335 * (1.05 if gender == "male" else 0.99)
     return head_idx, parent, R, length, r, head_w, head_d
+
+
+def build_ear_detail(bones, shape=None) -> SkinnedMesh:
+    """Soft concha shadows for the procedural pinna.
+
+    The main head mesh carries raised ear geometry. These very thin patches
+    add the recessed concha/canal value change that geometry alone cannot
+    express at this low polygon budget.
+    """
+    info = _head_info(bones, shape)
+    if info is None:
+        return _empty_mesh()
+    head_idx, parent, R, length, _r, head_w, head_d = info
+
+    ear_top_y = length * (H_BROW - 0.01)
+    ear_bot_y = length * (H_NOSE_BASE - 0.01)
+    ear_cy = 0.5 * (ear_top_y + ear_bot_y)
+    ear_half_h = 0.5 * (ear_top_y - ear_bot_y)
+    ear_cz = -head_d * 0.04
+    ear_x = head_w * 0.93
+    chunks = []
+    for side in (+1.0, -1.0):
+        chunks.append(prim.flat_patch(
+            (side * (ear_x + length * 0.006), ear_cy - ear_half_h * 0.02,
+             ear_cz + length * 0.007),
+            (length * 0.014, ear_half_h * 0.30),
+            head_idx, parent,
+            normal=(side, 0.0, 0.0),
+            subdiv=(4, 6),
+            thickness=0.0008,
+        ))
+
+    chunks = [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
+    v, n, ba, bb, w, idx = prim.merge(chunks)
+    return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
 # Eye geometry constants (factored so eyeball / iris / pupil / limbus /
