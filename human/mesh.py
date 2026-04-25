@@ -1689,6 +1689,7 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
         dep = m[f"depressor_anguli_{suffix}"]
         sneer = m[f"nasalis_{suffix}"]
         corr = m[f"corrugator_{suffix}"]
+        orb = m[f"orbicularis_oculi_{suffix}"]
         fold = max(0.0, 0.65 * zyg + 0.55 * sneer + 0.30 * dep)
         if fold > 0.045:
             chunks.append(prim.flat_patch(
@@ -1724,6 +1725,26 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
                 subdiv=(1, 3),
                 thickness=0.0007,
             ))
+        if orb > 0.10:
+            # AU6/AU7 orbicularis oculi: short radiating crow's-feet at the
+            # outer canthus. These are expression wrinkles, so young faces get
+            # them only while smiling/squinting, unlike static age lines.
+            for yoff, normal_y, scale in (
+                (0.012,  0.14, 0.82),
+                (0.000,  0.00, 1.00),
+                (-0.012, -0.16, 0.78),
+            ):
+                chunks.append(prim.flat_patch(
+                    (side * length * 0.198,
+                     length * (H_EYE + yoff),
+                     head_d * 0.902),
+                    (length * (0.008 + 0.004 * orb) * scale,
+                     length * 0.0018),
+                    head_idx, parent,
+                    normal=(side * 0.30, normal_y, 1.0),
+                    subdiv=(4, 1),
+                    thickness=0.00065,
+                ))
 
     if brow_compress > 0.08:
         # AU4 corrugator/procerus: short vertical glabellar furrows plus a
