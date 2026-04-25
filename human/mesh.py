@@ -773,40 +773,41 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # Chin protuberance is carried by the skull shell profile (forward cz
     # offset at t<-0.5). No floating blob is added here.
 
-    # --- Nose: bridge + tip + wings ---------------------------------------
-    # Bridge: a narrow ellipsoid from the radix (between the eyebrows) down
-    # to just above the tip. Narrower in X than before, and longer in Y so
-    # the nose has a visible bridge line.
-    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.70)
-    bridge_rx = length * (0.020 if gender == "male" else 0.018) * nose_width
-    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.60
-    bridge_rz = length * 0.040 * nose_bridge * nose_proj
+    # --- Nose: bridge + tip + alar cartilages ------------------------------
+    # The nasal silhouette is built from a narrow bony bridge, paired upper
+    # lateral cartilages, tip dome, alar wings, and a small columella. Keeping
+    # those roles separate avoids the stacked-sphere look while preserving the
+    # lightweight procedural mesh.
+    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.72)
+    bridge_rx = length * (0.016 if gender == "male" else 0.014) * nose_width
+    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.68
+    bridge_rz = length * 0.042 * nose_bridge * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, bridge_cy, head_d * (0.84 + 0.03 * nose_proj)),
+        (0.0, bridge_cy, head_d * (0.83 + 0.035 * nose_proj)),
         (bridge_rx, bridge_ry, bridge_rz),
         head_idx, parent_idx, rings=10, radial=12,
     ))
 
-    # Nose tip: rounded bulb at the base of the nose, protruding forward.
-    tip_cy = length * (H_NOSE_BASE + 0.02)
-    tip_rx = length * (0.034 if gender == "male" else 0.031) * nose_width
-    tip_ry = length * 0.030
-    tip_rz = length * 0.040 * nose_proj
+    # Tip dome: smaller and lower than the former bulb, so the alar wings and
+    # bridge define the nose instead of a single round bead.
+    tip_cy = length * (H_NOSE_BASE + 0.018)
+    tip_rx = length * (0.027 if gender == "male" else 0.025) * nose_width
+    tip_ry = length * 0.025
+    tip_rz = length * 0.045 * nose_proj
     chunks.append(prim.ellipsoid(
-        (0.0, tip_cy, head_d * (0.90 + 0.05 * nose_proj)),
+        (0.0, tip_cy, head_d * (0.895 + 0.058 * nose_proj)),
         (tip_rx, tip_ry, tip_rz),
         head_idx, parent_idx, rings=10, radial=14,
     ))
 
-    # Nostril wings (alae): two small lobes flanking the tip, implying
-    # nostrils without modelling a cavity. Placed slightly behind the tip
-    # so the tip still reads as the forwardmost point.
-    wing_rx = length * 0.018 * nose_width
-    wing_ry = length * 0.017
-    wing_rz = length * 0.024 * nose_proj
-    wing_sep = length * (0.032 if gender == "male" else 0.028) * nose_width
+    # Nostril wings (alae): wider, flatter lateral cartilages wrapping around
+    # the nostril plane. They sit behind the tip rather than forming two balls.
+    wing_rx = length * 0.020 * nose_width
+    wing_ry = length * 0.012
+    wing_rz = length * 0.018 * nose_proj
+    wing_sep = length * (0.030 if gender == "male" else 0.027) * nose_width
     wing_cy = length * (H_NOSE_BASE + 0.005)
-    wing_cz = head_d * (0.86 + 0.03 * nose_proj)
+    wing_cz = head_d * (0.852 + 0.036 * nose_proj)
     chunks += [
         prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
                        (wing_rx, wing_ry, wing_rz),
@@ -815,6 +816,16 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
                        (wing_rx, wing_ry, wing_rz),
                        head_idx, parent_idx, rings=8, radial=12),
     ]
+
+    # Columella: central soft-tissue strut between nostrils, visible in
+    # three-quarter/profile and anchoring the tip to the philtrum.
+    chunks.append(prim.ellipsoid(
+        (0.0, length * (H_NOSE_BASE - 0.012),
+         head_d * (0.865 + 0.036 * nose_proj)),
+        (length * 0.0060 * nose_width, length * 0.011,
+         length * 0.009 * nose_proj),
+        head_idx, parent_idx, rings=7, radial=10,
+    ))
 
     # --- Brow ridge -------------------------------------------------------
     # Subtle supraorbital ridge: two short arched swells above each orbit
