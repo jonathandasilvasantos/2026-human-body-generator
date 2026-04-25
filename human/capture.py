@@ -99,6 +99,7 @@ def capture(
     bvh_path=None,
     bvh_time=0.5,
     fov_deg=55.0,
+    light_profile=0,
 ):
     if seed is not None:
         random.seed(seed)
@@ -148,6 +149,8 @@ def capture(
     glUniformMatrix4fv(skin_prog.u_view, 1, GL_TRUE, view)
     renderer.upload_bones(skin_prog.u_bones, bone_mats)
     glUniform1f(skin_prog.u_seed, float(character.appearance.seed))
+    from . import lighting as _lighting
+    _lighting.apply(skin_prog, _lighting.by_index(int(light_profile)))
     for d in character.drawables:
         glUniform3f(skin_prog.u_color, *d.color)
         glUniform1i(skin_prog.u_mode, d.mode)
@@ -205,6 +208,8 @@ def main():
     ap.add_argument("--target-y", dest="ty", type=float, default=-0.20)
     ap.add_argument("--target-z", dest="tz", type=float, default=0.0)
     ap.add_argument("--fov", type=float, default=55.0)
+    ap.add_argument("--light", type=int, default=0,
+                    help="lighting profile index 0-9 (see human/lighting.py)")
     args = ap.parse_args()
     capture(
         out_path=args.out,
@@ -220,6 +225,7 @@ def main():
         bvh_path=args.bvh_path,
         bvh_time=args.bvh_time,
         fov_deg=args.fov,
+        light_profile=args.light,
     )
 
 

@@ -15,6 +15,9 @@ screenshot_*.png
 *.swp
 screenshots/baseline/
 screenshots/cycle*/
+screenshots/facial_detail*/
+screenshots/facial_structure*/
+screenshots/wrinkle_*/
 
 # Optional animation packs fetched via tools/download_animations.py.
 # Each is hundreds of MB with attribution-required licenses; see the

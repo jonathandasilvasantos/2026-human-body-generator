@@ -167,6 +167,45 @@ retargeted onto two different procedurally-generated characters:
   (elbow/knee flexion only, shoulder ad/abduction asymmetric, etc.).
   Both `random_pose()` and BVH playback respect them.
 
+### Lighting profiles (keys 0-9)
+- **Ten named profiles** in `human/lighting.py`, each a self-contained
+  setup (key + fill + back + hemispheric ambient + filmic grade) bound
+  to viewer keys `0`-`9`:
+  | Key | Profile | Style |
+  |-----|---------|-------|
+  | `0` | Portrait        | three-point: warm key, cool fill, warm rim |
+  | `1` | Studio Beauty   | broad soft key + 1:1 fill, white seamless |
+  | `2` | Rembrandt       | 45/45 key, weak fill, shadow triangle |
+  | `3` | Split           | 90 deg side key, no fill, half-face dark |
+  | `4` | Loop            | 35/35 key, mild fill, small nose loop |
+  | `5` | Butterfly       | overhead key + clamshell, butterfly shadow |
+  | `6` | Cinematic Noir  | hard low key + cyan negative fill, crushed blacks |
+  | `7` | Golden Hour     | low warm sun + cool sky hemi |
+  | `8` | HDRI Studio     | hemispheric IBL only, no harsh key |
+  | `9` | Ring Light      | 12-light circle around the camera-forward axis |
+- **Multi-light shader pipeline**: up to 16 directional lights uploaded
+  per frame, hemispheric ambient (top sky + bottom ground a la
+  Driscoll 2002 / Ramamoorthi SH band 2), wrapped diffuse for soft
+  sources (Hoffman 2010), Narkowicz 2015 ACES filmic tone-map,
+  post-tonemap contrast lift, multiplicative tint, and a profile-
+  driven rim layered on the per-material baseline.
+- **Color-temperature aware**: profiles spec lights by Kelvin
+  (3200 K tungsten / 5600 K daylight / 6500 K overcast / 2900 K
+  sunset / 8500 K open-shade) via Helland's 2012 Planckian-locus
+  approximation, so warm/cool balance reads correctly.
+- **Per-profile face fill** replaces the renderer's previous hard-
+  coded "skin readability" lift, so noir/split can collapse the
+  shadow side fully while studio beauty keeps cavities open.
+- **Mode 9 ring light** allocates 12 lights uniformly on a ring
+  around the camera-forward axis at 22 deg radius and 8 deg
+  elevation -- shadowless beauty illumination with the signature
+  ring catchlight in each iris.
+- Three-cycle iteration logged in
+  `screenshots/lighting_v{1,2,3}.png` (single character A/B, then
+  exposure tune, then 3-character x 10-mode validation grid).
+- `env/bin/python -m human.capture --light N ...` renders any
+  profile headless for diff comparison.
+
 ### Audio-driven lip sync
 - **WAV → viseme track** in `human/audio_lipsync.py`. Reads any mono /
   stereo 8/16/32-bit PCM WAV, runs a classic speech front-end
@@ -239,6 +278,17 @@ The implementation draws from:
 - **Edwards, Landreth, Fiume & Singh** (2016), *JALI: An Animator-
   Centric Viseme Model* — independent jaw + lip controls driven by
   prosody, which inspired the loudness-driven `jawOpen` layer
+- **Hurter** (1909) / **Megaw** (1939) — portrait lighting taxonomy
+  (Rembrandt, Loop, Split, Butterfly, Broad, Short)
+- **Burchett** (2009), *Lighting Setups* — studio beauty references
+- **Hoffman** (2010), *Background: Physics and Math of Shading* —
+  wrapped diffuse for soft sources
+- **Driscoll** (2002) / **Ramamoorthi** (2001) — hemispheric ambient
+  as a two-band SH IBL approximation
+- **Narkowicz** (2015), *ACES Filmic Tone Mapping Curve* — the
+  filmic curve baked into the lighting tone-map
+- **Helland** (2012) — Planckian-locus to sRGB approximation used
+  by `kelvin_rgb`
 
 ---
 
@@ -270,6 +320,7 @@ Controls:
 | `W`           | toggle procedural walk animation |
 | `J`           | toggle BVH playback (if a BVH is loaded) |
 | `K`           | play `./voice.wav` with audio-driven lip sync |
+| `0`-`9`       | switch lighting profile (Portrait / Beauty / Rembrandt / Split / Loop / Butterfly / Noir / Golden Hour / HDRI / Ring) |
 | `P`           | random static pose |
 | `T`           | T-pose |
 | `B`           | toggle skeleton overlay |
@@ -345,6 +396,7 @@ human/
   face_anim.py                 ARKit-52 rig, FACS presets, visemes,
                                Cohen-Massaro VisemeTrack
   audio_lipsync.py             WAV -> viseme track + blendshape sampler
+  lighting.py                  10 named lighting profiles + apply()
 tools/
   lipsync_capture.py           labelled face-strip renderer for a WAV
   viseme_capture.py            static viseme grid (no audio)
