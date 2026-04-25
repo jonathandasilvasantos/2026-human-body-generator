@@ -229,22 +229,25 @@ def _build_profiles() -> List[LightingProfile]:
 
     # 1 -- Studio Beauty / Cosmetic. Big soft key from above-front, low
     # fill, white seamless background hemi. Beauty dishes / softboxes
-    # have wide angular extent -> very high wrap value.
+    # have wide angular extent -> very high wrap value. Exposure is
+    # held back deliberately so the broad fill does not collapse the
+    # nose / cheek modelling -- a beauty dish flatters skin but does
+    # not erase form.
     profiles.append(LightingProfile(
         name="Studio Beauty",
         description="soft beauty-dish key + 1:1 fill, white seamless hemi",
         lights=_three_point(
-            key_az=0,  key_el=55,  key_color=K_DAYLIGHT, key_int=1.30,
-            fill_az=0, fill_el=-15, fill_color=K_DAYLIGHT, fill_int=0.55,
-            back_az=180, back_el=20, back_color=K_DAYLIGHT, back_int=0.20,
+            key_az=10,  key_el=45,  key_color=K_DAYLIGHT, key_int=0.95,
+            fill_az=-10, fill_el=-10, fill_color=K_DAYLIGHT, fill_int=0.35,
+            back_az=180, back_el=20, back_color=K_DAYLIGHT, back_int=0.18,
         ),
-        light_wrap=0.85,
-        ambient_top=(0.40, 0.42, 0.46),
-        ambient_bot=(0.32, 0.30, 0.28),
-        exposure=1.10, contrast=-0.05,
+        light_wrap=0.65,
+        ambient_top=(0.20, 0.22, 0.24),
+        ambient_bot=(0.18, 0.17, 0.16),
+        exposure=0.95, contrast=0.00,
         tint=(1.02, 1.01, 1.02),
-        rim_strength=0.04, rim_color=(1.0, 1.0, 1.0),
-        spec_mul=1.20, face_fill=0.45,
+        rim_strength=0.05, rim_color=(1.0, 1.0, 1.0),
+        spec_mul=1.10, face_fill=0.20,
     ))
 
     # 2 -- Rembrandt. 45 degree key, 45 degree elevation; minimal fill.
@@ -368,42 +371,46 @@ def _build_profiles() -> List[LightingProfile]:
     ))
 
     # 8 -- HDRI Studio Hemi. No directional key; lighting is dominated
-    # by a strong hemisphere ambient with cool sky / warm ground. Cheap
-    # SH-band-2 IBL approximation -- the look you get from a softbox
-    # tent or an overcast outdoor scene.
+    # by a hemisphere ambient with cool sky / warm ground -- a cheap
+    # SH-band-2 IBL approximation. We keep ambient values modest (the
+    # hemi lobe + the wrap factor on the gentle "sun" already do most
+    # of the lifting); cranking ambient further saturates the ACES
+    # curve and reads as a flat white-out rather than overcast.
     profiles.append(LightingProfile(
         name="HDRI Studio",
         description="hemispheric IBL: cool sky + warm bounce, no harsh key",
         lights=[
-            # Very gentle "sun" so specular paths still anchor.
             (_dir_from_polar(15, 60), _scale(K_OVERCAST, 0.55)),
             (_dir_from_polar(-15, 30), _scale(K_OVERCAST, 0.30)),
         ],
         light_wrap=0.95,
-        ambient_top=(0.55, 0.60, 0.70),
-        ambient_bot=(0.40, 0.34, 0.28),
-        exposure=1.00, contrast=-0.02,
+        ambient_top=(0.32, 0.36, 0.42),
+        ambient_bot=(0.22, 0.19, 0.16),
+        exposure=0.92, contrast=0.02,
         tint=(1.0, 1.0, 1.0),
         rim_strength=0.02, rim_color=(1.0, 1.0, 1.0),
-        spec_mul=1.0, face_fill=0.40,
+        spec_mul=1.0, face_fill=0.22,
     ))
 
     # 9 -- Ring Light. 12 small lights in a circle around the camera-
     # forward axis at a 22-degree half-angle, lifted 8 degrees above
     # eye-line. Even shadowless illumination, signature catchlight ring
     # in the eyes (which the multi-layered eye stack already captures).
+    # Total intensity budget kept lower than a single key because the
+    # circular convergence already lifts every world-space normal that
+    # faces the camera -- summing 12 contributions saturates fast.
     profiles.append(LightingProfile(
         name="Ring Light",
         description="12-light circle around camera axis (beauty / vlog)",
         lights=_ring(n=12, radius_az=22.0, elevation=8.0,
-                     color=K_DAYLIGHT, total_intensity=1.80),
-        light_wrap=0.40,
-        ambient_top=(0.20, 0.22, 0.26),
-        ambient_bot=(0.16, 0.16, 0.18),
-        exposure=1.10, contrast=-0.03,
+                     color=K_DAYLIGHT, total_intensity=1.20),
+        light_wrap=0.30,
+        ambient_top=(0.14, 0.15, 0.17),
+        ambient_bot=(0.10, 0.10, 0.11),
+        exposure=0.90, contrast=0.02,
         tint=(1.00, 1.00, 1.02),
-        rim_strength=0.03, rim_color=(1.0, 1.0, 1.0),
-        spec_mul=1.20, face_fill=0.40,
+        rim_strength=0.05, rim_color=(1.0, 1.0, 1.0),
+        spec_mul=1.20, face_fill=0.18,
     ))
 
     return profiles
