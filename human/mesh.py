@@ -1677,8 +1677,10 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
         return _empty_mesh()
     head_idx, parent, R, length, _r, _head_w, head_d = info
     m = _fa.muscle_activations(weights)
+    brow_compress = 0.5 * (m["corrugator_left"] + m["corrugator_right"])
+    brow_raise = 0.5 * (m["frontalis_left"] + m["frontalis_right"])
     if max(m["smile"], m["frown"], m["sneer"], m["mouth_tension"],
-           m["chin_tension"]) < 0.04:
+           m["chin_tension"], brow_compress, brow_raise) < 0.04:
         return _empty_mesh()
 
     chunks = []
@@ -1722,6 +1724,34 @@ def build_expression_folds(bones, shape=None, weights=None) -> SkinnedMesh:
                 subdiv=(1, 3),
                 thickness=0.0007,
             ))
+
+    if brow_compress > 0.08:
+        # AU4 corrugator/procerus: short vertical glabellar furrows plus a
+        # shallow horizontal fold just above the nasal root. Wrinkles form
+        # perpendicular to compression, so brow squeeze creates vertical
+        # folds near midline and a transverse root crease.
+        for x in (-0.010, 0.010):
+            chunks.append(prim.flat_patch(
+                (x * length,
+                 length * (H_BROW - 0.050),
+                 head_d * 0.830),
+                (length * 0.0022, length * (0.018 + 0.006 * brow_compress)),
+                head_idx, parent,
+                normal=(0.0, -0.20, 1.0),
+                subdiv=(1, 4),
+                thickness=0.0007,
+            ))
+        chunks.append(prim.flat_patch(
+            (0.0,
+             length * (H_BROW - 0.018),
+             head_d * 0.852),
+            (length * (0.034 + 0.012 * brow_compress),
+             length * 0.0025),
+            head_idx, parent,
+            normal=(0.0, -0.08, 1.0),
+            subdiv=(6, 1),
+            thickness=0.0007,
+        ))
 
     if m["chin_tension"] > 0.06:
         chunks.append(prim.flat_patch(
