@@ -1569,17 +1569,17 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     open_amt = length * 0.060 * jaw_drop + length * 0.016 * funnel
 
     # Upper lip: two symmetric lobes; per-side raise from upUp + sneer.
-    up_half_sep = length * 0.025
-    lip_volume = 1.0 + 0.10 * pucker + 0.06 * funnel
+    up_half_sep = length * 0.023
+    lip_volume = 1.0 + 0.08 * pucker + 0.05 * funnel
     press_thin = 1.0 - 0.30 * avg_press - 0.10 * mouth_close
-    up_rx = length * (0.040 - 0.010 * pucker
+    up_rx = length * (0.037 - 0.009 * pucker
                       + 0.008 * (stretch_l + stretch_r) * 0.5
                       - 0.004 * orbicularis_oris)
     # Roll tucks the upper lip inward (hides the red vermillion zone over
     # the teeth); shrug pushes it forward+up (AU17 mentalis for the lower,
     # AU16 levator for the upper).
-    up_ry = length * 0.0085 * fullness * max(0.40, press_thin - 0.25 * roll_upper)
-    up_rz = length * (0.0075 + 0.007 * pucker + 0.005 * funnel
+    up_ry = length * 0.0068 * fullness * max(0.40, press_thin - 0.25 * roll_upper)
+    up_rz = length * (0.0063 + 0.006 * pucker + 0.004 * funnel
                       + 0.0025 * avg_press
                       - 0.003 * roll_upper) * fullness * lip_volume
     up_y = (y_mouth + length * 0.010 + open_amt * 0.35
@@ -1608,9 +1608,9 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
 
     # Mouth corners: per-side smile / frown / dimple / stretch.
     base_corner_x = length * 0.060
-    corner_rx = length * (0.012 + 0.003 * mouth_tension)
-    corner_ry = length * (0.0085 * max(0.58, 1.0 - 0.25 * avg_press))
-    corner_rz = length * (0.0055 + 0.002 * mouth_tension)
+    corner_rx = length * (0.010 + 0.0025 * mouth_tension)
+    corner_ry = length * (0.0068 * max(0.58, 1.0 - 0.25 * avg_press))
+    corner_rz = length * (0.0048 + 0.0016 * mouth_tension)
 
     def _corner(side_sign, smile, frown, dimple, stretch):
         # Wider amplitude than the legacy preset so a w=0.7 smile reads
@@ -1648,9 +1648,9 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     low_rx = length * (0.070 - 0.018 * pucker
                        + 0.011 * (stretch_l + stretch_r) * 0.5
                        - 0.006 * orbicularis_oris)
-    low_ry = length * 0.011 * fullness * max(
+    low_ry = length * 0.0088 * fullness * max(
         0.40, 1.0 - 0.34 * avg_press - 0.28 * roll_lower)
-    low_rz = length * (0.009 + 0.006 * pucker + 0.005 * funnel
+    low_rz = length * (0.0072 + 0.005 * pucker + 0.004 * funnel
                        + 0.0025 * avg_press
                        - 0.004 * roll_lower) * fullness * lip_volume
     lower = prim.ellipsoid(
@@ -1895,6 +1895,8 @@ def build_teeth(bones, shape=None, weights=None) -> SkinnedMesh:
     # combined with jaw_open (handled via the bite-line y shift above).
     visible = (bite + 0.8 * upper_reveal + 0.7 * lower_reveal
                + 0.6 * smile_reveal + 0.6 * stretch_reveal)
+    if visible < 0.075:
+        return _empty_mesh()
     if mouth_close > 0.5 and visible < 0.12:
         return _empty_mesh()
 
