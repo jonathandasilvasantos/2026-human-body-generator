@@ -1862,14 +1862,25 @@ def build_age_detail(bones, shape=None, age_group="adult") -> SkinnedMesh:
             subdiv=(8, 1), thickness=0.0012,
         ))
 
-    # Eye-corner crows'-feet and nasolabial fold, mirrored L/R.
+    # Eye-corner crow's-feet and nasolabial fold, mirrored L/R.
     for side in (+1.0, -1.0):
-        chunks.append(prim.flat_patch(
-            (side * head_w * 0.38, length * (H_EYE - 0.010), head_d * 0.91),
-            (length * 0.030, length * 0.0045 * strength),
-            head_idx, parent, normal=(side * 0.18, 0.00, 1),
-            subdiv=(4, 1), thickness=0.0012,
-        ))
+        age_lines = (
+            (0.014,  0.14, 0.74),
+            (0.000,  0.00, 0.95),
+            (-0.014, -0.16, 0.70),
+        )
+        for yoff, normal_y, scale in age_lines:
+            chunks.append(prim.flat_patch(
+                (side * length * 0.190,
+                 length * (H_EYE + yoff),
+                 head_d * 0.905),
+                (length * (0.010 + 0.006 * strength) * scale,
+                 length * 0.0018 * strength),
+                head_idx, parent,
+                normal=(side * 0.26, normal_y, 1.0),
+                subdiv=(4, 1),
+                thickness=0.0008,
+            ))
         chunks.append(prim.flat_patch(
             (side * head_w * 0.20, length * (H_NOSE_BASE + 0.015), head_d * 0.88),
             (length * 0.006 * strength, length * 0.048),
