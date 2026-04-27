@@ -13,36 +13,7 @@ import moderngl
 import numpy as np
 from PIL import Image
 
-VERT_SHADER = """
-#version 330
-uniform mat4 mvp;
-uniform mat4 model;
-in vec3 in_pos;
-in vec3 in_norm;
-in vec2 in_uv;
-out vec3 v_norm;
-out vec2 v_uv;
-void main() {
-    v_norm = mat3(model) * in_norm;
-    v_uv = in_uv;
-    gl_Position = mvp * vec4(in_pos, 1.0);
-}
-"""
-
-FRAG_SHADER = """
-#version 330
-uniform vec3 light_dir;
-uniform vec3 base_color;
-in vec3 v_norm;
-in vec2 v_uv;
-out vec4 frag;
-void main() {
-    vec3 n = normalize(v_norm);
-    float l = max(dot(n, normalize(light_dir)), 0.0);
-    vec3 col = base_color * (0.25 + 0.75 * l);
-    frag = vec4(col, 1.0);
-}
-"""
+from app.shaders import VERT, FRAG
 
 
 def _perspective(fov_deg: float, aspect: float, near: float, far: float) -> np.ndarray:
@@ -77,7 +48,7 @@ def render(human, *, view: str = "front", size: tuple[int, int] = (512, 768)) ->
     human.evaluate()
     ctx = moderngl.create_standalone_context()
     ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
-    prog = ctx.program(vertex_shader=VERT_SHADER, fragment_shader=FRAG_SHADER)
+    prog = ctx.program(vertex_shader=VERT, fragment_shader=FRAG)
 
     verts = np.ascontiguousarray(human.vertices, dtype=np.float32)
     idx = np.ascontiguousarray(human.indices, dtype=np.uint32)
@@ -126,6 +97,7 @@ def render(human, *, view: str = "front", size: tuple[int, int] = (512, 768)) ->
     prog["model"].write(model.T.astype(np.float32).tobytes())
     prog["light_dir"].value = (0.4, 0.8, 0.6)
     prog["base_color"].value = (0.85, 0.78, 0.70)
+    prog["ambient_color"].value = (0.0, 0.0, 0.0)
 
     vao.render()
 

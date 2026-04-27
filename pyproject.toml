@@ -11,11 +11,13 @@ dependencies = [
     "numpy>=1.26",
     "moderngl>=5.10",
     "glfw>=2.7",
+    "pygltflib>=1.16",
     "imgui-bundle>=1.5",
 ]
 
 [project.scripts]
 human = "app.main:main"
+human-view = "app.viewer:main"
 
 [tool.setuptools]
 packages = ["app", "bindings"]
