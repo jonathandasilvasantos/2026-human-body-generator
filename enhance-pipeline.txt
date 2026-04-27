@@ -1,0 +1,380 @@
+ENHANCEMENT PIPELINE — procedural human ⇄ photoreal ⇄ image-to-3D
+==================================================================
+
+Goal
+----
+Iteratively raise the visual fidelity of the procedural human in this
+repo by closing the gap between its silhouette and a real 3D mesh
+reconstructed from a photoreal image. Each cycle is a closed A/B/C/D
+loop with humans-in-the-loop only at the final "diff and decide"
+step.
+
+Everything heavy runs locally — both the photoreal image generation
+(FLUX.1 Kontext on bender) and the image-to-3D reconstruction
+(Tencent Hunyuan3D-2mv on the same box). No external APIs are billed
+per cycle; once bender is set up, a full A→D pass costs only the
+electricity to run the 3090 Ti.
+
+The procedural builder generates a fresh, randomized character on
+every render — random gender, body proportions, facial features,
+hair style, facial hair, clothing, skin tone — driven by the
+parameters in `human/skeleton.py::Shape` and
+`human/character.py::Appearance`. The point of this pipeline is to
+keep that variation working while making the output read closer to
+a real photo at body framing distance.
+
+
+Where things run
+----------------
+Local machine (macOS):
+    Stage A — render the procedural character (GLFW + offscreen FBO)
+    Stage B driver — `scripts/flux_kontext_remote.py` (scp + ssh wrapper)
+    Stage D — stitch the comparison grid
+
+Remote box ("bender") at `bender@192.168.15.99`:
+    GPU       NVIDIA RTX 3090 Ti, 24 GB VRAM
+    OS        Ubuntu 22.04
+    Auth      key-based SSH (the local machine's pubkey is on
+              bender:~/.ssh/authorized_keys)
+
+    Conda env `flux`  — Stage B image-to-image (FLUX.1 Kontext-dev)
+    Conda env `hy3d`  — Stage C image-to-3D    (Tencent Hunyuan3D-2mv)
+
+    Both envs share `~/.cache/huggingface` for weight downloads. The
+    HF token at `~/.cache/huggingface/token` gates both the FLUX
+    Kontext-dev model (FLUX.1 [dev] Non-Commercial license) and the
+    DINOv3 image encoder used by Hunyuan3D-2mv.
+
+
+Stage A — render a random character (procedural)
+-------------------------------------------------
+Tool:    tools/triview_capture.py
+Where:   local machine, via `env/bin/python`
+Output:  screenshots/triview/cN_{front,left,back,iso}.png
+         screenshots/triview/cN_{face_front,face_3q,face_left,face_iso}.png
+         screenshots/triview/cN_grid.png
+
+What runs:
+- `Shape` is sampled gender-conditioned (height, bulk, hip_w,
+  shoulder_w, bust, waist, head_size, leg_len, torso_len,
+  lower_bulk, q_angle, neck_thick, bust_proj, plus face/eye knobs).
+  Today's loop fixes the seed (42, female) so cycle-to-cycle diffs
+  are attributable to procedural fixes, not random variation. The
+  pipeline is general — change the seed/gender flags and the rest
+  of the loop runs identically.
+- `Appearance` is sampled too: skin tone, hair color/style,
+  eyebrow color, facial hair style/color, top style/material/color,
+  bottom style/material/color, shoe style/color.
+- The body is built as a single skinned mesh (`human/mesh.py`),
+  with the chest+spine+pelvis trio coming from
+  `human/body_loft.py::build_torso_loft` so the silhouette
+  carries waist / hip_w / shoulder_w / bust morphs at vertex
+  resolution instead of as separate ellipsoids. Limbs use
+  `body_loft.build_limb_loft` (continuous thigh+shin and uarm+farm
+  tubes) since cycle 55.
+- Hair, eyebrows, facial hair, garments and shoes layer on top.
+- The character is forced into a **true T-pose** with arms held
+  horizontal (`skeleton.t_pose_wide` — the plain `t_pose()`
+  returns identity rotations, which on this rig leaves the arms
+  hanging by the sides; image-to-3D models produce noticeably
+  better topology when the arms are extended).
+- Eight views are rendered offscreen via GLFW + an FBO at 1024×1024
+  with the Studio Beauty lighting profile. Each render is
+  composited over a soft vertical-gradient backdrop (the eye —
+  and Hunyuan3D below — handles a horizon-line backdrop better
+  than a flat clear color).
+
+Locked viewpoints — body row and face row:
+
+    body:
+      front    yaw=0           pitch=  3°
+      left     yaw=-90°        pitch=  3°
+      back     yaw=180°        pitch=  3°
+      iso      yaw= 45°        pitch=  6°    (3/4 sanity-check view)
+
+    face (head-and-shoulders crop):
+      face_front, face_3q, face_left, face_iso
+
+Front, left and back are exactly the three named views the Tencent
+Hunyuan3D-2mv multiview model expects. Iso is for our own eyeballing.
+
+Run:
+    env/bin/python -m tools.triview_capture \
+        --seed 42 --gender female \
+        --out screenshots/triview/cN
+
+
+Stage B — FLUX.1 Kontext photoreal target (open-source, on bender)
+------------------------------------------------------------------
+Tool:    scripts/flux_kontext_remote.py     (local SSH wrapper)
+         remote/flux_kontext_infer.py        (runs on bender)
+         remote/flux_kontext_setup.sh        (one-time install)
+Where:   bender, conda env `flux`
+Model:   `black-forest-labs/FLUX.1-Kontext-dev` via diffusers
+         `FluxKontextPipeline` with bf16 + `enable_model_cpu_offload()`
+         to fit the 3090 Ti's 24 GB.
+Output:  screenshots/triview/cN_{front,left,back}_photoreal.png
+
+This replaces the previous Nano Banana Pro / Gemini API stage so we
+no longer pay per cycle. Same input/output filenames and prompt shape
+as before — only the underlying model changed.
+
+For each procedural PNG the local wrapper:
+
+  1. `scp` the procedural PNG to `bender:/tmp/flux_in_<uuid>.png`.
+  2. `ssh` into the `flux` env and run:
+
+         python /home/bender/projects/flux_kontext/infer.py \
+             --image  /tmp/flux_in_<uuid>.png \
+             --output /tmp/flux_out_<uuid>.png \
+             --prompt "Transform this 3D character render into a
+                       photorealistic image of a real woman in T-pose
+                       with arms horizontal. Same pose, body
+                       proportions, framing, camera angle. Medium-
+                       length brown hair, green t-shirt, blue jeans,
+                       brown sneakers, fair skin. Soft vertical-
+                       gradient grey backdrop. Studio beauty lighting,
+                       no harsh shadows. Photorealistic, sharp focus,
+                       full body in frame. Photographic, not
+                       painterly." \
+             --seed 42 --steps 28 --guidance 2.5 \
+             --height 1024 --width 1024
+
+  3. `scp` the result back to the local `--output` path and clean up
+     the remote temp files.
+
+The "same pose / framing / clothing" half of the prompt is
+load-bearing. Without it the model happily reposes the character
+or substitutes the outfit, which would make the rest of the loop
+meaningless. The reference image lets FLUX Kontext lock onto the
+character's specific colors and proportions.
+
+Iso isn't sent through Stage B — Hunyuan3D-2mv only conditions on
+the three named views, and our gallery panel uses iso only as a
+sanity check rendered directly from the procedural mesh and from
+the reconstructed mesh.
+
+Run (front/left/back):
+    for v in front left back; do
+      env/bin/python scripts/flux_kontext_remote.py \
+        --image  screenshots/triview/cN_${v}.png \
+        --output screenshots/triview/cN_${v}_photoreal.png \
+        --prompt "..."
+    done
+
+
+Stage C — Tencent Hunyuan3D-2mv image-to-3D (also on bender)
+------------------------------------------------------------
+The 2D-to-3D step lives on bender too. Hunyuan3D-2mv needs a 24 GB
+CUDA GPU, several GB of model weights, and a stack of CUDA
+extensions (`custom_rasterizer`, `differentiable_renderer`) that
+take ~10 minutes to compile from source. We installed it once on
+bender and Stage C of every cycle reuses that install.
+
+Where things live on bender:
+
+    /home/bender/miniconda3
+        conda env `hy3d` — Python 3.10, torch 2.6.0+cu124,
+        CUDA toolkit 12.4 from nvidia/label/cuda-12.4.1, plus
+        the Hunyuan3D wheel set (hy3dgen, custom_rasterizer,
+        differentiable_renderer, mesh_processor, transformers,
+        diffusers, etc).
+
+    /home/bender/projects/hunyuan3d/Hunyuan3D-2/
+        clone of github.com/Tencent-Hunyuan/Hunyuan3D-2 with the
+        custom CUDA kernels installed in place via `pip install -e .`
+
+    /home/bender/projects/hunyuan3d/run_image_to_3d.py
+        small wrapper around hy3dgen.shapegen's
+        Hunyuan3DDiTFlowMatchingPipeline. Loads
+        `tencent/Hunyuan3D-2mv` (subfolder
+        `hunyuan3d-dit-v2-mv`) — the multiview finetune that
+        accepts a dict of {front, left, back} reference PNGs —
+        runs 30 diffusion steps + volume decoding at octree
+        resolution 380, and writes the resulting trimesh as a
+        single .glb.
+
+    /home/bender/projects/hunyuan3d/glb_render.py
+        pyrender + EGL renderer that reads the .glb back from disk
+        and shoots the same four views (front/left/back/iso) at
+        1024×1024 with three-point lighting. macOS can't do EGL
+        offscreen reliably, hence rendering on bender too.
+
+    /home/bender/.cache/huggingface
+        weight cache for `tencent/Hunyuan3D-2mv` (~4 GB) plus the
+        DINOv3 image encoder. The HF token at
+        ~/.cache/huggingface/token gates the gated DINOv3 repo;
+        `HF_HUB_DISABLE_XET=1` is set per-invocation because the
+        Xet client misbehaves on this network.
+
+How a cycle drives Stage C from the local machine:
+
+    # 1) ship the three photoreal PNGs to bender
+    scp screenshots/triview/cN_{front,left,back}_photoreal.png \
+        bender@192.168.15.99:/home/bender/projects/hunyuan3d/
+
+    # 2) inference + render on bender, single SSH command
+    ssh bender@192.168.15.99 '
+      source /home/bender/miniconda3/etc/profile.d/conda.sh
+      conda activate hy3d
+      cd /home/bender/projects/hunyuan3d
+      PYTHONNOUSERSITE=1 HF_HUB_DISABLE_XET=1 \
+      HF_TOKEN=$(cat ~/.cache/huggingface/token) \
+      python run_image_to_3d.py \
+          --front cN_front_photoreal.png \
+          --left  cN_left_photoreal.png \
+          --back  cN_back_photoreal.png \
+          --out-glb cN.glb
+      PYOPENGL_PLATFORM=egl python glb_render.py \
+          --glb cN.glb --out cN_hy3d
+    '
+
+    # 3) pull the .glb and the four reconstruction renders back
+    scp 'bender@192.168.15.99:/home/bender/projects/hunyuan3d/cN.glb' \
+        'bender@192.168.15.99:/home/bender/projects/hunyuan3d/cN_hy3d_*.png' \
+        screenshots/triview/
+
+End-to-end on bender, after the model weights are cached: ~1
+minute (30 diffusion steps + ~2700 octree-decode chunks +
+mesh export + four pyrender renders).
+
+
+Stage D — three-row comparison
+------------------------------
+Tool:    tools/triview_compare.py
+Where:   local machine
+Output:  compare/cN_compare.png  (3 rows × 4 cols, plus 2 face rows)
+         (the `compare/` folder is the canonical home for these
+          stitched grids; each cycle drops its compare PNG there
+          and that's the file we open in Preview to eyeball.)
+
+    Row 1: cN_{view}.png             (procedural — ours)
+    Row 2: cN_{view}_photoreal.png   (FLUX Kontext target — bender)
+    Row 3: cN_hy3d_{view}.png        (Hunyuan3D-2mv reconstruction)
+    Row 4: cN_face_{view}.png             (procedural face crop)
+    Row 5: cN_face_{view}_photoreal.png   (FLUX Kontext face crop)
+
+Reading row 1 against row 3 gives the actionable gap list. Reading
+row 2 against row 3 sanity-checks Stage C (if row 3 is missing
+detail that's clearly in row 2, the image-to-3D step lost it, not us).
+Rows 4-5 are the same A/B comparison cropped to head-and-shoulders
+for face-distance work.
+
+
+Stage E — propose enhancements + ship the next cycle
+----------------------------------------------------
+Score each visible gap by severity (High / Medium / Low) and by
+"visual payoff per line of code". Don't ship more than 3 fixes per
+cycle — otherwise it's hard to attribute the diff in the next
+comparison. Document the fixes in
+`notes/triview_enhancement_cycle.md` under a "Cycle N+1" heading,
+implement, then re-roll Stages A through D with the same seed.
+
+You don't have to run Stage B + C on every cycle. The local
+Stage A grid is fast (~5 s) and good enough for "did this change
+silhouette / coverage / proportion in the way I expected?" checks.
+Reserve full B + C runs for cycles whose change is large enough to
+be worth a 1-2 minute round trip to bender — typically every 3-5
+local-only cycles.
+
+The goal is **not** matching Hunyuan3D's per-pixel topology — we
+won't get there with capsules + analytical morphs. The goal is
+matching the silhouette + proportions + cloth read at the framing
+distances we actually ship.
+
+
+Reproduce a cycle end-to-end
+----------------------------
+    # 1. Render the procedural triview (Stage A)
+    env/bin/python -m tools.triview_capture \
+        --seed 42 --gender female \
+        --out screenshots/triview/cN
+
+    # 2. Photoreal each required view (Stage B — FLUX Kontext on bender)
+    for v in front left back; do
+      env/bin/python scripts/flux_kontext_remote.py \
+        --image  screenshots/triview/cN_${v}.png \
+        --output screenshots/triview/cN_${v}_photoreal.png \
+        --prompt "Transform into photorealistic person, same pose/framing, ..."
+    done
+
+    # 3. Push photoreal views to bender, run Hunyuan3D-2mv (Stage C),
+    #    render the .glb from same views (also on bender)
+    scp screenshots/triview/cN_{front,left,back}_photoreal.png \
+        bender@192.168.15.99:/home/bender/projects/hunyuan3d/
+    ssh bender@192.168.15.99 'source ~/miniconda3/etc/profile.d/conda.sh \
+      && conda activate hy3d \
+      && cd /home/bender/projects/hunyuan3d \
+      && PYTHONNOUSERSITE=1 HF_HUB_DISABLE_XET=1 \
+         HF_TOKEN=$(cat ~/.cache/huggingface/token) \
+         python run_image_to_3d.py \
+            --front cN_front_photoreal.png \
+            --left  cN_left_photoreal.png \
+            --back  cN_back_photoreal.png \
+            --out-glb cN.glb \
+      && PYOPENGL_PLATFORM=egl python glb_render.py \
+            --glb cN.glb --out cN_hy3d'
+
+    # 4. Pull the mesh + reconstruction renders back
+    scp 'bender@192.168.15.99:/home/bender/projects/hunyuan3d/cN.glb' \
+        'bender@192.168.15.99:/home/bender/projects/hunyuan3d/cN_hy3d_*.png' \
+        screenshots/triview/
+
+    # 5. Side-by-side (Stage D) — written into ./compare/
+    env/bin/python -m tools.triview_compare \
+        --in screenshots/triview/cN \
+        --out compare/cN_compare.png
+
+    # 6. Eyeball, write Cycle N+1 fixes into
+    #    notes/triview_enhancement_cycle.md, implement, bump N, repeat.
+
+
+Files
+-----
+tools/triview_capture.py        Stage A (8-view procedural render)
+scripts/flux_kontext_remote.py  Stage B local SSH wrapper
+remote/flux_kontext_infer.py    Stage B inference (runs on bender, env `flux`)
+remote/flux_kontext_setup.sh    one-time install of FLUX Kontext on bender
+                                Stage C lives on bender:
+                                    /home/bender/projects/hunyuan3d/
+                                        run_image_to_3d.py
+                                        glb_render.py
+                                    conda env: hy3d
+                                    weights: ~/.cache/huggingface/...
+tools/glb_render.py             local copy of glb_render.py for ref;
+                                bender runs its own copy under
+                                /home/bender/projects/hunyuan3d/
+tools/triview_compare.py        Stage D (3-row body × 4-col + 2-row face)
+notes/triview_enhancement_cycle.md   running log of cycles + gaps + fixes
+notes/dense_mesh_migration_plan.md   plan for evolving the body builder
+                                from capsules to a continuous skinned
+                                mesh while keeping the procedural
+                                variety knobs that drive `Shape` and
+                                `Appearance`
+human/body_loft.py              lofted torso (cycle 9), lofted limbs
+                                (cycle 55), pants cuff bell (cycle 54)
+screenshots/triview/cN_*        per-cycle artefacts (PNGs + .glb)
+compare/cN_compare.png          three-row stitched comparison grids
+
+
+Why this stack
+--------------
+- **Local image generation (FLUX.1 Kontext on bender)** beat the
+  alternatives we evaluated (Gemini 3 Pro Image / Nano Banana Pro,
+  Qwen-Image-Edit-2509, z.ai GLM-Image, CogView-4) on the constraint
+  set that matters here: image-to-image edit with strong identity
+  and pose preservation, fits in 24 GB VRAM, no per-cycle billing.
+  z.ai GLM-Image is the SOTA open-source image-edit model but
+  requires 80 GB+ per its own README. Qwen-Image-Edit-2509 fits but
+  loses facial identity faster than Kontext. Gemini Nano Banana Pro
+  was the prior choice — strongest quality but billed per call,
+  which dominated cycle cost.
+- **Tencent Hunyuan3D-2mv on bender** is the image-to-3D side. The
+  multiview finetune (`tencent/Hunyuan3D-2mv`, subfolder
+  `hunyuan3d-dit-v2-mv`) accepts exactly our three named views
+  (front/left/back) without retraining, runs the full pipeline in
+  ~1 minute on a 3090 Ti, and produces a clean watertight .glb.
+  We evaluated Trellis 2 first (PixelArtistry walkthrough at
+  https://www.youtube.com/watch?v=FuFm8zBHDWI) but switched to
+  Hunyuan3D-2mv because of the native 3-view conditioning and
+  better Linux + 24 GB compatibility.

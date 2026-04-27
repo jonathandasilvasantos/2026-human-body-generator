@@ -121,6 +121,26 @@ class Shape:
     chin_proj: float = 1.0
     brow_prominence: float = 1.0
     age_group: str = "adult"
+    # Dense-mesh migration (notes/dense_mesh_migration_plan.md): the body
+    # builder uses a continuous lofted torso instead of three independent
+    # chest/spine/pelvis capsules. There's no capsule fallback any more --
+    # the flag is kept on the dataclass only as a kill switch for debugging.
+    use_loft: bool = True
+    # Phase F1 of the face-mesh migration
+    # (notes/face_mesh_migration_plan.md): when True the head compound
+    # uses a dense face mesh built by `face_mesh.build_face_mesh`
+    # instead of (in addition to) the primitive ellipsoid stack. The
+    # current implementation carves orbits / nose ridge / mouth puff
+    # into a dense oval shell but the existing eye / nose / lip
+    # primitives still sit on top with their old positions, so 3/4
+    # view shows misaligned features. Future cycles port those
+    # primitives onto the same landmarks so they cohabit cleanly.
+    # Phase F1 (cycle 13) lands the dense face mesh; cycle 15 disables
+    # the redundant nose primitives and the age-line overlay when
+    # use_face_mesh=True so the carved mesh owns the silhouette
+    # without competing geometry. Eyes / lips / brows still primitive,
+    # ported in F2.
+    use_face_mesh: bool = True
 
 
 # Per-bone shape rules: which shape knobs scale the head/tip offsets and
@@ -589,7 +609,9 @@ def random_shape(gender: str | None = None) -> Shape:
         leg_len    = random.uniform(0.94, 1.10)
         head_size  = random.uniform(0.94, 1.04)
         # Strong waist cinch, fuller lower body for the gynoid silhouette.
-        waist      = random.uniform(0.78, 0.88)
+        # Cycle 4: deeper cinch so the hourglass reads at body framing
+        # distance, not just up close.
+        waist      = random.uniform(0.70, 0.80)
         lower_bulk = random.uniform(1.04, 1.14)
         neck_thick = random.uniform(0.78, 0.92)
         bust_proj  = random.uniform(0.55, 0.95)

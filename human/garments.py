@@ -44,26 +44,92 @@ def _mesh_from_chunks(chunks) -> SkinnedMesh:
     return SkinnedMesh(v, n, np.stack([ba, bb], axis=1).astype(np.int32), w, idx)
 
 
+def _crop_loft_from_ring(mesh: SkinnedMesh, radial: int, first_ring: int) -> SkinnedMesh:
+    """Keep a torso-loft shell from ``first_ring`` upward.
+
+    The body loft emits side-wall rings first, then bottom/top cap centers.
+    A shirt should be open at the hem, so the bottom cap is discarded and
+    triangles touching cropped-out lower rings are removed.
+    """
+    side_count = mesh.positions.shape[0] - 2
+    if side_count <= 0 or side_count % radial != 0:
+        return mesh
+    n_rings = side_count // radial
+    first = max(0, min(first_ring, n_rings - 1)) * radial
+    top_cap = mesh.positions.shape[0] - 1
+    keep = np.zeros((mesh.positions.shape[0],), dtype=bool)
+    keep[first:side_count] = True
+    keep[top_cap] = True
+
+    remap = np.full((mesh.positions.shape[0],), -1, dtype=np.int32)
+    remap[keep] = np.arange(int(keep.sum()), dtype=np.int32)
+    tris = mesh.indices.reshape(-1, 3)
+    tri_keep = keep[tris].all(axis=1)
+    indices = remap[tris[tri_keep].reshape(-1)].astype(np.uint32)
+    return SkinnedMesh(
+        mesh.positions[keep],
+        mesh.normals[keep],
+        mesh.bones[keep],
+        mesh.weights[keep],
+        indices,
+    )
+
+
+def _crop_loft_ring_range(mesh: SkinnedMesh, radial: int, first_ring: int,
+                          last_ring: int, keep_bottom_cap: bool = False,
+                          keep_top_cap: bool = False) -> SkinnedMesh:
+    """Keep an inclusive ring range from a torso loft side wall."""
+    side_count = mesh.positions.shape[0] - 2
+    if side_count <= 0 or side_count % radial != 0:
+        return mesh
+    n_rings = side_count // radial
+    first_ring = max(0, min(first_ring, n_rings - 1))
+    last_ring = max(first_ring, min(last_ring, n_rings - 1))
+    first = first_ring * radial
+    last = (last_ring + 1) * radial
+    bottom_cap = mesh.positions.shape[0] - 2
+    top_cap = mesh.positions.shape[0] - 1
+
+    keep = np.zeros((mesh.positions.shape[0],), dtype=bool)
+    keep[first:last] = True
+    if keep_bottom_cap and first_ring == 0:
+        keep[bottom_cap] = True
+    if keep_top_cap and last_ring == n_rings - 1:
+        keep[top_cap] = True
+
+    remap = np.full((mesh.positions.shape[0],), -1, dtype=np.int32)
+    remap[keep] = np.arange(int(keep.sum()), dtype=np.int32)
+    tris = mesh.indices.reshape(-1, 3)
+    tri_keep = keep[tris].all(axis=1)
+    indices = remap[tris[tri_keep].reshape(-1)].astype(np.uint32)
+    return SkinnedMesh(
+        mesh.positions[keep],
+        mesh.normals[keep],
+        mesh.bones[keep],
+        mesh.weights[keep],
+        indices,
+    )
+
+
 # --- garment catalogs --------------------------------------------------------
 
 TOP_BONE_SETS = {
     # Tops stop at the natural waist instead of wrapping the whole pelvis.
     # That keeps the torso from becoming a single block while bottoms still
-    # overlap enough to hide seams in motion. `neck` is included so the
-    # collar follows head/neck motion: without it, tilting or rotating the
-    # head exposes the underside of the jaw / back of the beard through the
-    # chest's static collar dome.
-    "tank":       ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R"],
-    "tshirt":     ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R",
+    # overlap enough to hide seams in motion. Tops intentionally do not
+    # include the neck bone: the prior neck capsule read as a high padded
+    # collar at body distance.
+    "tank":       ["chest", "spine", "pelvis", "clav_L", "clav_R"],
+    "tshirt":     ["chest", "spine", "pelvis", "clav_L", "clav_R",
                    "uarm_L", "uarm_R"],
-    "longsleeve": ["chest", "spine", "pelvis", "neck", "clav_L", "clav_R",
+    "longsleeve": ["chest", "spine", "pelvis", "clav_L", "clav_R",
                    "uarm_L", "uarm_R", "farm_L", "farm_R"],
 }
 
 
 BOTTOM_BONE_SETS = {
-    "pants":  ["pelvis", "thigh_L", "thigh_R", "shin_L", "shin_R"],
-    "shorts": ["pelvis", "thigh_L", "thigh_R"],
+    "pants":  ["thigh_L", "thigh_R", "shin_L", "shin_R"],
+    "shorts": ["thigh_L", "thigh_R"],
 }
 
 
@@ -77,6 +143,58 @@ def build_top(bones, style, inflate=0.022, length_scale=1.0,
     names = TOP_BONE_SETS.get(style)
     if not names:
         return _empty_mesh()
+    if shape is not None and bool(getattr(shape, "use_loft", False)):
+        from . import body_loft
+        torso = body_loft.build_torso_loft(bones, shape)
+        if torso is not None:
+            # Drop the lower pelvis cap so tight tops end at the upper hip
+            # instead of becoming a one-piece bodysuit over the trousers.
+            torso = _crop_loft_from_ring(
+                torso, body_loft.RADIAL, max(0, body_loft.RINGS_PELVIS - 2))
+            cloth_pos = torso.positions + torso.normals * max(inflate, 0.004)
+            torso_cloth = SkinnedMesh(
+                cloth_pos.astype(np.float32),
+                torso.normals,
+                torso.bones,
+                torso.weights,
+                torso.indices,
+            )
+            sleeve_names = [n for n in names
+                            if n not in ("chest", "spine", "pelvis")]
+            # Cycle 56: build sleeves as a normal-offset shell of the
+            # arm limb loft (now correctly oriented post-c55) instead of
+            # capsule shells. Falls back to the old capsule path if the
+            # loft can't be built or the sleeve doesn't include arm bones.
+            sleeve_pieces: list = []
+            covered_arms: set = set()
+            for chain in (("uarm_L", "farm_L"), ("uarm_R", "farm_R")):
+                # Only loft what the top actually covers — t-shirts skip
+                # the forearm chain.
+                chain_in_sleeve = [n for n in chain if n in sleeve_names]
+                if not chain_in_sleeve:
+                    continue
+                arm = body_loft.build_limb_loft(bones, shape, chain_in_sleeve)
+                if arm is None:
+                    continue
+                cloth_pos = arm.positions + arm.normals * max(inflate * 0.70, 0.004)
+                sleeve_pieces.append(SkinnedMesh(
+                    cloth_pos.astype(np.float32),
+                    arm.normals,
+                    arm.bones,
+                    arm.weights,
+                    arm.indices,
+                ))
+                covered_arms.update(chain_in_sleeve)
+
+            # Anything not covered by a loft (e.g. clav_L/R for the
+            # shoulder transition) keeps the capsule path.
+            remainder = [n for n in sleeve_names if n not in covered_arms]
+            if remainder:
+                sleeve_pieces.append(mesh_mod.build_selected(
+                    bones, remainder, inflate * 0.70, length_scale,
+                    gender, shape))
+
+            return _merge_meshes([torso_cloth] + sleeve_pieces)
     return mesh_mod.build_selected(bones, names, inflate, length_scale,
                                    gender, shape)
 
@@ -116,15 +234,56 @@ def build_sleeve_underlayer(bones, style, top_inflate=0.022,
 
 
 def build_bottom(bones, style, inflate=0.020, length_scale=1.0,
-                 gender="neutral") -> SkinnedMesh:
-    """Pants / shorts. Skirts handled by :func:`build_skirt`."""
+                 gender="neutral", shape=None) -> SkinnedMesh:
+    """Pants / shorts. Skirts handled by :func:`build_skirt`.
+
+    Cycle 49 architecture: capsule legs + cropped torso-loft hip shell.
+
+    Cycle 54 add-on: long pants additionally get a small flared cuff
+    ring at each ankle (`build_pants_cuffs`) so the hem reads as a jeans
+    break / boot-cut taper instead of a closed sock end. This is the
+    only piece of the originally-planned "continuous pants loft" that
+    fits cleanly into one cycle without breaking the proven capsule
+    coverage of the upper inner thigh / crotch area. The waistband,
+    inseam, and continuous tube parts remain on the roadmap for later
+    cycles (54.5 / after the cycle 55 limb-loft fix).
+    """
     if style in ("none", "skirt"):
         return _empty_mesh()
     names = BOTTOM_BONE_SETS.get(style)
     if not names:
         return _empty_mesh()
-    # tuck pants/shorts up slightly to sit below the garment top
-    return mesh_mod.build_selected(bones, names, inflate, length_scale, gender)
+    legs = mesh_mod.build_selected(bones, names, inflate, length_scale, gender)
+    extras: list = []
+    if style == "pants":
+        from . import body_loft
+        cuffs = body_loft.build_pants_cuffs(bones, shape, inflate)
+        if cuffs is not None:
+            extras.append(cuffs)
+    if shape is not None and bool(getattr(shape, "use_loft", False)):
+        from . import body_loft
+        torso = body_loft.build_torso_loft(bones, shape)
+        if torso is not None:
+            # Pants need a fitted pelvic shell, but the old pelvis capsule
+            # made jeans read as a bulky blue barrel. Reuse only the lower
+            # body-loft rings so the waistband follows hip/waist morphs and
+            # closes the side/crotch skin gaps without covering the shirt.
+            last_ring = body_loft.RINGS_PELVIS + (1 if style == "pants" else 0)
+            hip = _crop_loft_ring_range(
+                torso, body_loft.RADIAL, 0, last_ring,
+                keep_bottom_cap=True, keep_top_cap=False)
+            hip_pos = hip.positions + hip.normals * max(inflate * 0.75, 0.004)
+            hip_shell = SkinnedMesh(
+                hip_pos.astype(np.float32),
+                hip.normals,
+                hip.bones,
+                hip.weights,
+                hip.indices,
+            )
+            return _merge_meshes([hip_shell, legs] + extras)
+    if extras:
+        return _merge_meshes([legs] + extras)
+    return legs
 
 
 # --- bust fabric overlay -----------------------------------------------------
@@ -183,7 +342,59 @@ def build_shoes(bones, style) -> SkinnedMesh:
         # boots are bulkier and have a small shaft that hugs the ankle
         inflate = 0.016
         length_scale = 1.07
-    return mesh_mod.build_selected(bones, ["foot_L", "foot_R"], inflate, length_scale)
+    base = mesh_mod.build_selected(bones, ["foot_L", "foot_R"], inflate, length_scale)
+
+    # Cycle 4: add a toe-cap ellipsoid at each foot tip and a flat sole plate
+    # under the foot so the silhouette reads as a shoe rather than a
+    # cylinder. Skinned to the foot bone so it animates with stride.
+    fL = _find(bones, "foot_L")
+    fR = _find(bones, "foot_R")
+    if fL < 0 or fR < 0:
+        return base
+
+    toe_chunks = []
+    for foot_idx in (fL, fR):
+        _, _, _, tip, radius = bones[foot_idx]
+        tip_vec = np.asarray(tip, dtype=np.float32)
+        R = mathx.align_y_to(tip_vec)
+        length = float(np.linalg.norm(tip_vec))
+        # Toe-cap: short, wide ellipsoid at the foot tip, slightly extending
+        # forward (+y in bone-local before the align_y_to rotation back).
+        toe_r = (radius * 1.20, length * 0.30, radius * 1.10)
+        toe_c = (0.0, length * 1.05, 0.0)
+        toe = prim.ellipsoid(toe_c, toe_r, foot_idx, -1, weight_self=1.0,
+                             rings=8, radial=14)
+        # Sole plate: thin ellipsoid below the foot, full toe-to-heel length.
+        sole_r = (radius * 1.18, length * 0.10, length * 0.62)
+        sole_c = (0.0, length * 0.55, -radius * 0.85)
+        sole = prim.ellipsoid(sole_c, sole_r, foot_idx, -1, weight_self=1.0,
+                              rings=6, radial=14)
+        # Cycle 59: heel cup at the back of the foot — a small bulge above
+        # the sole at the rear so the heel reads as a distinct shoe
+        # feature and not a smooth cylinder end. Bigger for boots, modest
+        # for sneakers (controlled by the existing `inflate` budget).
+        heel_height = length * (0.18 if style == "boots" else 0.12)
+        heel_r = (radius * 1.05, length * 0.16, length * 0.18)
+        heel_c = (0.0, length * 0.05, -radius * 0.40)
+        heel = prim.ellipsoid(heel_c, heel_r, foot_idx, -1, weight_self=1.0,
+                              rings=6, radial=12)
+        chunks_to_add = [toe, sole, heel]
+        if style == "boots":
+            # Cycle 59: low ankle shaft / cuff opening — a short cylinder
+            # rising above the foot bone's heel so the boot has a visible
+            # opening where the pant cuff tucks in. Skinned to the foot
+            # so it stays attached during step animation.
+            shaft_r = (radius * 1.12, heel_height, radius * 1.05)
+            shaft_c = (0.0, heel_height * 0.55, -radius * 0.35)
+            shaft = prim.ellipsoid(shaft_c, shaft_r, foot_idx, -1,
+                                   weight_self=1.0, rings=6, radial=14)
+            chunks_to_add.append(shaft)
+        for chunk in chunks_to_add:
+            v, n, ba, bb, w, idx = chunk
+            toe_chunks.append((v @ R.T, n @ R.T, ba, bb, w, idx))
+
+    addon = _mesh_from_chunks(toe_chunks)
+    return _merge_meshes([base, addon])
 
 
 # --- skirt -------------------------------------------------------------------

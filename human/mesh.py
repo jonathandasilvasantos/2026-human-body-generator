@@ -399,9 +399,9 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0,
         # ellipsoid away from the chest and skin pops through the seam on the
         # underside. Extra y-clearance keeps the sleeve wrapping past the
         # skin's silhouette through the full range of arm elevation.
-        clear = max(radius_inflate + 0.004, 0.016)
+        clear = max(radius_inflate + 0.002, 0.010)
         rx = body_rx + clear
-        ry = body_ry + clear + 0.006
+        ry = body_ry + clear + 0.002
         rz = body_rz + clear
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, body_offset_y, 0.0),
@@ -437,9 +437,9 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0,
         # depressed so it caps the armpit. R rotates it onto the actual
         # clavicle axis (lateral) before merging.
         Rc = mathx.align_y_to(c_tip_v)
-        ext_lat = c_len * 0.48 + radius_inflate * 0.7   # along clav (lateral)
-        ext_dn  = c_r * 2.1 + radius_inflate            # downward (axillary)
-        ext_fb  = c_r * 1.9 + radius_inflate            # front-back
+        ext_lat = c_len * 0.40 + radius_inflate * 0.45  # along clav (lateral)
+        ext_dn  = c_r * 1.55 + radius_inflate * 0.60    # downward (axillary)
+        ext_fb  = c_r * 1.45 + radius_inflate * 0.60    # front-back
         v, n, ba, bb, w, idx = prim.ellipsoid(
             (0.0, c_len * 0.85, -c_r * 0.4),
             (ext_dn, ext_lat, ext_fb),
@@ -473,17 +473,57 @@ def build_selected(bones, bone_names, radius_inflate=0.02, length_scale=1.0,
 def build(bones, shape=None) -> SkinnedMesh:
     """Stitch a capsule per bone + compound head + compound hands +
     optional bust/glutes into one merged skinned mesh. The head and hand
-    bones get dedicated compound meshes instead of plain capsules."""
+    bones get dedicated compound meshes instead of plain capsules.
+
+    Phase 1 of the dense-mesh migration: when ``shape.use_loft`` is True
+    (default), the chest+spine+pelvis trio is replaced by a single
+    continuous lofted torso emitted by ``body_loft.build_torso_loft``.
+    The capsule path stays in the loop for any other bone the loft
+    doesn't cover."""
     head_idx = _find(bones, "head")
     chest_idx = _find(bones, "chest")
+    spine_idx = _find(bones, "spine")
+    pelvis_idx = _find(bones, "pelvis")
     hand_idx_L = _find(bones, "hand_L")
     hand_idx_R = _find(bones, "hand_R")
     gender = getattr(shape, "gender", "neutral") if shape else "neutral"
+    use_loft = bool(getattr(shape, "use_loft", True)) if shape else True
     chunks = []
+
+    loft_skip = set()
+    if use_loft:
+        from . import body_loft
+        torso = body_loft.build_torso_loft(bones, shape)
+        if torso is not None:
+            chunks.append((torso.positions, torso.normals,
+                           torso.bones[:, 0], torso.bones[:, 1],
+                           torso.weights, torso.indices))
+            loft_skip = {chest_idx, spine_idx, pelvis_idx}
+
+        # Cycle 55: build_limb_loft now generates rings in world space
+        # using each bone's actual bind-pose axis and stores vertices via
+        # the weighted-reference trick (same as build_torso_loft), so it
+        # produces correctly oriented continuous tubes instead of flat
+        # plates. Enable it for arm chains; legs continue on capsules
+        # since their bind-pose axis matches their T-pose orientation
+        # (no pose rotation), making the capsule path equivalent.
+        for chain_names in (("uarm_L", "farm_L"), ("uarm_R", "farm_R"),
+                            ("thigh_L", "shin_L"), ("thigh_R", "shin_R")):
+            limb = body_loft.build_limb_loft(bones, shape, list(chain_names))
+            if limb is not None:
+                chunks.append((limb.positions, limb.normals,
+                               limb.bones[:, 0], limb.bones[:, 1],
+                               limb.weights, limb.indices))
+                for n in chain_names:
+                    nidx = _find(bones, n)
+                    if nidx >= 0:
+                        loft_skip.add(nidx)
 
     for i, (name, parent, _, tip, r) in enumerate(bones):
         if i == head_idx or i == hand_idx_L or i == hand_idx_R:
             continue  # compound meshes below
+        if i in loft_skip:
+            continue  # covered by the torso loft
         tip_vec = np.asarray(tip, dtype=np.float32)
         length = float(np.linalg.norm(tip_vec))
         if length < 1e-5:
@@ -547,6 +587,27 @@ def build(bones, shape=None) -> SkinnedMesh:
             rings=12, radial=16,
         )
         chunks.append((v @ R.T, n @ R.T, ba, bb, w, idx))
+
+    # Cycle 4 → 8: trapezius slope. Cycle 4's bilateral ellipsoid was
+    # reading as two extra blobs perched on the shoulders. Cycle 8 sinks
+    # the bridge lower (level with the deltoid top, not above it),
+    # narrows the lateral extent so it fairs into the existing chest
+    # capsule, and tucks z slightly back so the silhouette stays sloped
+    # rather than gaining new outline mass.
+    if chest_idx >= 0:
+        _, _, _, ch_tip, ch_r = bones[chest_idx]
+        ch_tip_v = np.asarray(ch_tip, dtype=np.float32)
+        ch_len = float(np.linalg.norm(ch_tip_v))
+        if ch_len > 1e-4:
+            Rch = mathx.align_y_to(ch_tip_v)
+            for sign in (-1.0, +1.0):
+                v, n, ba, bb, w, idx = prim.ellipsoid(
+                    (sign * ch_r * 0.65, ch_len * 0.86, -ch_r * 0.05),
+                    (ch_r * 0.42, ch_r * 0.20, ch_r * 0.50),
+                    chest_idx, -1, weight_self=1.0,
+                    rings=8, radial=12,
+                )
+                chunks.append((v @ Rch.T, n @ Rch.T, ba, bb, w, idx))
 
     if head_idx >= 0:
         head_parent = bones[head_idx][1]
@@ -766,11 +827,28 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     skull_cy = length * (H_TOP + H_CHIN) * 0.5
     skull_half = length * (H_TOP - H_CHIN) * 0.5
     face_asym = _shape_trait(shape, "face_asymmetry", 0.0)
-    chunks.append(_skull_shell(
-        skull_cy, skull_half, profile,
-        head_idx, parent_idx, rings=32, radial=40, weight_self=1.0,
-        asymmetry=face_asym,
-    ))
+    use_face_mesh = bool(getattr(shape, "use_face_mesh", False)) if shape else False
+    if use_face_mesh:
+        # Phase F1: dense face mesh with carved-in landmarks. The
+        # primitive add-ons below (eyes, lips, ears, etc.) layer on top.
+        from . import face_mesh as _face_mesh
+        dense = _face_mesh.build_face_mesh(head_idx, parent_idx,
+                                           np.asarray(tip, np.float32),
+                                           gender, shape)
+        if dense is not None:
+            chunks.append(dense)
+        else:
+            chunks.append(_skull_shell(
+                skull_cy, skull_half, profile,
+                head_idx, parent_idx, rings=32, radial=40,
+                weight_self=1.0, asymmetry=face_asym,
+            ))
+    else:
+        chunks.append(_skull_shell(
+            skull_cy, skull_half, profile,
+            head_idx, parent_idx, rings=32, radial=40, weight_self=1.0,
+            asymmetry=face_asym,
+        ))
 
     # Chin protuberance is carried by the skull shell profile (forward cz
     # offset at t<-0.5). Surface detail below adds the mentolabial cue.
@@ -780,71 +858,80 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     # lateral cartilages, tip dome, alar wings, and a small columella. Keeping
     # those roles separate avoids the stacked-sphere look while preserving the
     # lightweight procedural mesh.
-    bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.72)
-    bridge_rx = length * (0.016 if gender == "male" else 0.014) * nose_width
-    bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.68
-    bridge_rz = length * 0.042 * nose_bridge * nose_proj
-    chunks.append(prim.ellipsoid(
-        (0.0, bridge_cy, head_d * (0.83 + 0.035 * nose_proj)),
-        (bridge_rx, bridge_ry, bridge_rz),
-        head_idx, parent_idx, rings=10, radial=12,
-    ))
+    #
+    # Phase F1: when `use_face_mesh` is on, the dense face mesh already
+    # carries a continuous nose ridge + tip protrusion in its surface, so
+    # stacking these primitives on top produces a double-bump silhouette.
+    # Skip them in that mode and let the carved mesh own the nose shape.
+    # The nose then loses the nostril detail; that's acceptable for phase
+    # F1 and gets reintroduced as vertex deltas on the carved mesh in F2.
+    if not use_face_mesh:
+        bridge_cy = length * (H_NOSE_BASE + (H_EYE - H_NOSE_BASE) * 0.72)
+        bridge_rx = length * (0.016 if gender == "male" else 0.014) * nose_width
+        bridge_ry = length * (H_EYE - H_NOSE_BASE) * 0.68
+        bridge_rz = length * 0.042 * nose_bridge * nose_proj
+        chunks.append(prim.ellipsoid(
+            (0.0, bridge_cy, head_d * (0.83 + 0.035 * nose_proj)),
+            (bridge_rx, bridge_ry, bridge_rz),
+            head_idx, parent_idx, rings=10, radial=12,
+        ))
 
-    # Tip dome: smaller and lower than the former bulb, so the alar wings and
-    # bridge define the nose instead of a single round bead.
-    tip_cy = length * (H_NOSE_BASE + 0.018)
-    tip_rx = length * (0.027 if gender == "male" else 0.025) * nose_width
-    tip_ry = length * 0.025
-    tip_rz = length * 0.045 * nose_proj
-    chunks.append(prim.ellipsoid(
-        (0.0, tip_cy, head_d * (0.895 + 0.058 * nose_proj)),
-        (tip_rx, tip_ry, tip_rz),
-        head_idx, parent_idx, rings=10, radial=14,
-    ))
+        # Tip dome: smaller and lower than the former bulb, so the alar wings and
+        # bridge define the nose instead of a single round bead.
+        tip_cy = length * (H_NOSE_BASE + 0.018)
+        tip_rx = length * (0.027 if gender == "male" else 0.025) * nose_width
+        tip_ry = length * 0.025
+        tip_rz = length * 0.045 * nose_proj
+        chunks.append(prim.ellipsoid(
+            (0.0, tip_cy, head_d * (0.895 + 0.058 * nose_proj)),
+            (tip_rx, tip_ry, tip_rz),
+            head_idx, parent_idx, rings=10, radial=14,
+        ))
 
-    # Nostril wings (alae): wider, flatter lateral cartilages wrapping around
-    # the nostril plane. They sit behind the tip rather than forming two balls.
-    wing_rx = length * 0.020 * nose_width
-    wing_ry = length * 0.012
-    wing_rz = length * 0.018 * nose_proj
-    wing_sep = length * (0.030 if gender == "male" else 0.027) * nose_width
-    wing_cy = length * (H_NOSE_BASE + 0.005)
-    wing_cz = head_d * (0.852 + 0.036 * nose_proj)
-    chunks += [
-        prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
-                       (wing_rx, wing_ry, wing_rz),
-                       head_idx, parent_idx, rings=8, radial=12),
-        prim.ellipsoid((-wing_sep, wing_cy, wing_cz),
-                       (wing_rx, wing_ry, wing_rz),
-                       head_idx, parent_idx, rings=8, radial=12),
-    ]
+        # Nostril wings (alae): wider, flatter lateral cartilages wrapping around
+        # the nostril plane. They sit behind the tip rather than forming two balls.
+        wing_rx = length * 0.020 * nose_width
+        wing_ry = length * 0.012
+        wing_rz = length * 0.018 * nose_proj
+        wing_sep = length * (0.030 if gender == "male" else 0.027) * nose_width
+        wing_cy = length * (H_NOSE_BASE + 0.005)
+        wing_cz = head_d * (0.852 + 0.036 * nose_proj)
+        chunks += [
+            prim.ellipsoid((+wing_sep, wing_cy, wing_cz),
+                           (wing_rx, wing_ry, wing_rz),
+                           head_idx, parent_idx, rings=8, radial=12),
+            prim.ellipsoid((-wing_sep, wing_cy, wing_cz),
+                           (wing_rx, wing_ry, wing_rz),
+                           head_idx, parent_idx, rings=8, radial=12),
+        ]
 
-    # Columella: central soft-tissue strut between nostrils, visible in
-    # three-quarter/profile and anchoring the tip to the philtrum.
-    chunks.append(prim.ellipsoid(
-        (0.0, length * (H_NOSE_BASE - 0.012),
-         head_d * (0.865 + 0.036 * nose_proj)),
-        (length * 0.0060 * nose_width, length * 0.011,
-         length * 0.009 * nose_proj),
-        head_idx, parent_idx, rings=7, radial=10,
-    ))
+        # Columella: central soft-tissue strut between nostrils, visible in
+        # three-quarter/profile and anchoring the tip to the philtrum.
+        chunks.append(prim.ellipsoid(
+            (0.0, length * (H_NOSE_BASE - 0.012),
+             head_d * (0.865 + 0.036 * nose_proj)),
+            (length * 0.0060 * nose_width, length * 0.011,
+             length * 0.009 * nose_proj),
+            head_idx, parent_idx, rings=7, radial=10,
+        ))
 
     # --- Brow ridge -------------------------------------------------------
-    # Subtle supraorbital ridge: two short arched swells above each orbit
-    # (not a single horizontal bar). Male's is more prominent. Tucked
-    # deep enough that only a soft highlight pokes through the shell.
-    brow_ry = length * (0.008 if gender == "male" else 0.006) * brow_prom
-    brow_rz = length * (0.014 if gender == "male" else 0.010) * brow_prom
-    brow_rx = length * 0.070
-    brow_y = length * (H_BROW - 0.015)
-    brow_sep = length * 0.105
-    brow_z = head_d * 0.60
-    chunks += [
-        prim.ellipsoid((+brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
-                       head_idx, parent_idx, rings=6, radial=14),
-        prim.ellipsoid((-brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
-                       head_idx, parent_idx, rings=6, radial=14),
-    ]
+    # Subtle supraorbital ridge. The dense face mesh already carries a
+    # `brow_prominence` morph at the brow strip, so skip this primitive
+    # when `use_face_mesh` is on and let the carved mesh own the ridge.
+    if not use_face_mesh:
+        brow_ry = length * (0.008 if gender == "male" else 0.006) * brow_prom
+        brow_rz = length * (0.014 if gender == "male" else 0.010) * brow_prom
+        brow_rx = length * 0.070
+        brow_y = length * (H_BROW - 0.015)
+        brow_sep = length * 0.105
+        brow_z = head_d * 0.60
+        chunks += [
+            prim.ellipsoid((+brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
+                           head_idx, parent_idx, rings=6, radial=14),
+            prim.ellipsoid((-brow_sep, brow_y, brow_z), (brow_rx, brow_ry, brow_rz),
+                           head_idx, parent_idx, rings=6, radial=14),
+        ]
 
     # Cheekbones are now implicit in the skull shell's profile; no extra
     # blobs are added here. Future cycles may re-introduce them as subtle
@@ -861,33 +948,33 @@ def _head_compound(head_idx, parent_idx, tip, radius, gender, shape=None):
     ear_cy = 0.5 * (ear_top_y + ear_bot_y)
     ear_half_h = 0.5 * (ear_top_y - ear_bot_y)
     ear_cz = -head_d * 0.04          # canal sits behind eye line without floating
-    ear_x = head_w * 0.93
+    ear_x = head_w * 0.88
     for side in (+1.0, -1.0):
         # Helix: tall narrow vertical capsule that forms the outer rim.
         chunks.append(prim.ellipsoid(
             (side * ear_x, ear_cy + ear_half_h * 0.05, ear_cz),
-            (length * 0.012, ear_half_h * 1.04, length * 0.045),
+            (length * 0.009, ear_half_h * 0.82, length * 0.032),
             head_idx, parent_idx, rings=10, radial=14,
         ))
         # Antihelix / concha rim: smaller raised inner fold set slightly
         # forward and inward from the helix.
         chunks.append(prim.ellipsoid(
-            (side * (ear_x - length * 0.012), ear_cy + ear_half_h * 0.06,
+            (side * (ear_x - length * 0.010), ear_cy + ear_half_h * 0.06,
              ear_cz + length * 0.008),
-            (length * 0.0065, ear_half_h * 0.62, length * 0.020),
+            (length * 0.0050, ear_half_h * 0.48, length * 0.015),
             head_idx, parent_idx, rings=8, radial=10,
         ))
         # Tragus: small knob in front of the concha, near the canal.
         chunks.append(prim.ellipsoid(
-            (side * (ear_x - length * 0.018), ear_cy - ear_half_h * 0.22,
-             ear_cz + length * 0.020),
-            (length * 0.008, length * 0.012, length * 0.011),
+            (side * (ear_x - length * 0.014), ear_cy - ear_half_h * 0.22,
+             ear_cz + length * 0.016),
+            (length * 0.006, length * 0.009, length * 0.008),
             head_idx, parent_idx, rings=6, radial=10,
         ))
         # Lobe: small bulb at the bottom, slightly protruding forward.
         chunks.append(prim.ellipsoid(
-            (side * ear_x, ear_bot_y - length * 0.002, ear_cz + length * 0.006),
-            (length * 0.014, length * 0.017, length * 0.024),
+            (side * ear_x, ear_bot_y - length * 0.002, ear_cz + length * 0.005),
+            (length * 0.010, length * 0.012, length * 0.017),
             head_idx, parent_idx, rings=8, radial=12,
         ))
 
@@ -950,10 +1037,10 @@ def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
         return []
     R = mathx.align_y_to(tip)
 
-    palm_len   = length * 0.68
-    hand_w     = radius * 1.18
-    palm_t     = radius * 0.52
-    finger_r   = radius * 0.18
+    palm_len   = length * 0.64
+    hand_w     = radius * 1.14
+    palm_t     = radius * 0.46
+    finger_r   = radius * 0.145
 
     # The hand bone's tip points along -Y (it hangs from the wrist), so
     # ``align_y_to`` produces R = diag(1, -1, -1) -- it flips Y and Z from
@@ -981,11 +1068,30 @@ def _hand_compound(hand_idx, parent_idx, tip, radius, side: int):
         ),
     ]
 
+    # Four separated fingers in the rigid T-pose silhouette. This keeps the
+    # current 19-bone rig, but gives body-framing renders a real palm/finger
+    # break instead of the old mitten block.
+    finger_y = palm_len * 0.78
+    finger_offsets = (-0.50, -0.17, 0.17, 0.48)
+    finger_lens = (0.82, 0.96, 1.00, 0.86)
+    for k, off in enumerate(finger_offsets):
+        chunks.append(prim.ellipsoid(
+            (hand_w * off, finger_y + length * 0.015 * finger_lens[k],
+             -palm_t * 0.05),
+            (finger_r * (0.92 if k in (0, 3) else 1.0),
+             length * 0.155 * finger_lens[k],
+             finger_r * 1.05),
+            hand_idx, parent_idx,
+            rings=8, radial=10,
+        ))
+
+    # Soft knuckle pad across the palm base so the separated fingers read as
+    # connected anatomy rather than detached beads.
     chunks.append(prim.ellipsoid(
-        (0.0, palm_len * 0.66, -palm_t * 0.04),
-        (hand_w * 0.84, length * 0.16, finger_r * 1.15),
+        (0.0, palm_len * 0.62, -palm_t * 0.03),
+        (hand_w * 0.78, length * 0.055, finger_r * 1.25),
         hand_idx, parent_idx,
-        rings=8, radial=12,
+        rings=6, radial=12,
     ))
 
     return [(v @ R.T, n @ R.T, ba, bb, w, idx) for (v, n, ba, bb, w, idx) in chunks]
@@ -1121,7 +1227,7 @@ def build_chin_detail(bones, shape=None) -> SkinnedMesh:
 # catchlight stay in perfect concentric agreement and convergence is
 # applied identically everywhere). All scales are relative to head length.
 EYE_SEP_X      = 0.098   # half-distance between eye centers
-EYE_RADIUS     = 0.037   # eyeball radius (true sphere)
+EYE_RADIUS     = 0.032   # eyeball radius (true sphere)
 IRIS_RATIO     = 0.55    # iris radius as fraction of eyeball radius
 PUPIL_RATIO    = 0.30    # pupil radius as fraction of iris radius (~3mm)
 LIMBUS_RATIO   = 1.10    # limbal-ring outer radius as fraction of iris
@@ -1165,6 +1271,12 @@ def _eye_metrics(length, head_d):
 def _eye_metrics_for_shape(length, head_d, shape=None):
     """Eye placement with rest-identity traits applied consistently."""
     sep, y, z, eye_r, conv = _eye_metrics(length, head_d)
+    # Phase F2: when the dense face mesh is on, the carved orbit
+    # recesses the surface in front of the eye. Pull
+    # the eye sphere back by the same offset so iris / sclera stay
+    # nested inside the orbit instead of bulging out.
+    if shape is not None and bool(getattr(shape, "use_face_mesh", False)):
+        z = z - head_d * 0.055
     sep *= _shape_trait(shape, "eye_sep", 1.0)
     eye_r *= _shape_trait(shape, "eye_size", 1.0)
     # Larger value means deeper-set eyes. The center moves back, but the iris
@@ -1522,6 +1634,12 @@ def build_lips(bones, shape=None, weights=None) -> SkinnedMesh:
     muscles = _fa.muscle_activations(weights)
     y_mouth = length * H_MOUTH
     z = head_d * 0.84
+    # Phase F2: when the dense face mesh is on, the carved mouth puff
+    # pushes the surface forward by ~0.05 * head_d at H_MOUTH. Move the
+    # lip primitive forward by the same offset so it sits on the
+    # carved bump instead of behind it.
+    if shape is not None and bool(getattr(shape, "use_face_mesh", False)):
+        z += head_d * 0.05
     fullness = _shape_trait(shape, "lip_fullness", 1.0)
     if _head_age(shape) == "young":
         fullness *= 1.04

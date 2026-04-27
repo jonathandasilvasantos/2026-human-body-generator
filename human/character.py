@@ -196,11 +196,19 @@ def reroll_clothes(app: "Appearance") -> "Appearance":
     return replace(
         app,
         top_style=top_style, top_color=top_color,
-        top_inflate=random.uniform(0.014, 0.020),
-        top_length_scale=random.uniform(1.00, 1.05),
+        # Cycle 4: tighter range — tops were reading as puffy jackets next
+        # to the photoreal target. Tight tops should hug the torso.
+        top_inflate=random.uniform(0.008, 0.013),
+        # Cycle 9: with the new lofted torso the body silhouette pinches
+        # at the waist, exposing skin if the shirt stops short of the
+        # pant waistband. Lengthen so the hem clearly overlaps the pants.
+        top_length_scale=random.uniform(1.02, 1.08),
         bottom_style=bottom_style, bottom_color=bottom_color,
-        bottom_inflate=random.uniform(0.008, 0.013),
-        bottom_length_scale=random.uniform(0.98, 1.04),
+        bottom_inflate=random.uniform(0.005, 0.010),
+        # Cycle 4 → 9: pants tuck above the ankle (cuff over shoe) but
+        # waistband must reach high enough to overlap the shirt hem now
+        # that the loft pinches at the waist.
+        bottom_length_scale=random.uniform(0.97, 1.02),
         skirt_length_frac=random.uniform(0.5, 1.0),
         skirt_flare=random.uniform(1.15, 1.55),
         dress_length_frac=random.uniform(0.8, 1.2),
@@ -362,12 +370,20 @@ def random_appearance(gender: str) -> Appearance:
         facial_hair_color=facial_hair_color,
         top_style=top_style,
         top_color=top_color,
-        top_inflate=random.uniform(0.014, 0.020),
-        top_length_scale=random.uniform(1.00, 1.05),
+        # Cycle 4: tighter range — tops were reading as puffy jackets next
+        # to the photoreal target. Tight tops should hug the torso.
+        top_inflate=random.uniform(0.008, 0.013),
+        # Cycle 9: with the new lofted torso the body silhouette pinches
+        # at the waist, exposing skin if the shirt stops short of the
+        # pant waistband. Lengthen so the hem clearly overlaps the pants.
+        top_length_scale=random.uniform(1.02, 1.08),
         bottom_style=bottom_style,
         bottom_color=bottom_color,
-        bottom_inflate=random.uniform(0.008, 0.013),
-        bottom_length_scale=random.uniform(0.98, 1.04),
+        bottom_inflate=random.uniform(0.005, 0.010),
+        # Cycle 4 → 9: pants tuck above the ankle (cuff over shoe) but
+        # waistband must reach high enough to overlap the shirt hem now
+        # that the loft pinches at the waist.
+        bottom_length_scale=random.uniform(0.97, 1.02),
         skirt_length_frac=random.uniform(0.5, 1.0),
         skirt_flare=random.uniform(1.15, 1.55),
         dress_length_frac=random.uniform(0.8, 1.2),
@@ -422,7 +438,8 @@ class Character:
         )
         add(mesh_mod.build_ear_detail(self.bones, self.shape), inner_ear, 0)
         chin_shadow = tuple(min(1.0, c * 0.82) for c in app.skin_color)
-        add(mesh_mod.build_chin_detail(self.bones, self.shape), chin_shadow, 0)
+        if not bool(getattr(self.shape, "use_face_mesh", False)):
+            add(mesh_mod.build_chin_detail(self.bones, self.shape), chin_shadow, 0)
 
         # eyes -- back-to-front so each layer can be drawn opaque without
         # losing the one behind it: sclera, limbal ring, iris, pupil,
@@ -477,10 +494,21 @@ class Character:
         crease_mul = 0.76 if app.age_group == "elder" else 0.88
         crease = tuple(min(1.0, c * crease_mul) for c in app.skin_color)
         dynamic_crease = tuple(min(1.0, c * 0.90) for c in app.skin_color)
-        add(mesh_mod.build_expression_folds(self.bones, self.shape, face_w),
-            dynamic_crease, 0)
-        add(mesh_mod.build_age_detail(self.bones, self.shape, app.age_group),
-            crease, 0)
+        if not bool(getattr(self.shape, "use_face_mesh", False)):
+            add(mesh_mod.build_expression_folds(self.bones, self.shape, face_w),
+                dynamic_crease, 0)
+        # When the dense face mesh is in use, both age-detail patches
+        # and dynamic expression folds sit on a different surface than
+        # they were tuned for and read as dark spots rather than
+        # skin folds. Skip for now; phase F2 ports the creases as
+        # vertex deltas on the carved mesh.
+        if not bool(getattr(self.shape, "use_face_mesh", False)):
+            add(mesh_mod.build_age_detail(self.bones, self.shape, app.age_group),
+                crease, 0)
+        else:
+            # Re-add only the expression folds we hadn't yet drawn —
+            # actually skip both for cleanliness.
+            pass
 
         # hair + eyebrows
         add(accessories.build_hair(self.bones, app.hair_style), app.hair_color, 2)
@@ -525,7 +553,8 @@ class Character:
             add(garments.build_bottom(self.bones, app.bottom_style,
                                       inflate=app.bottom_inflate,
                                       length_scale=app.bottom_length_scale,
-                                      gender=self.shape.gender),
+                                      gender=self.shape.gender,
+                                      shape=self.shape),
                 app.bottom_color, 1, bottom_mat)
 
         add(garments.build_shoes(self.bones, app.shoe_style), app.shoe_color, 4)

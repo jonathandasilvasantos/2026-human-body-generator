@@ -115,7 +115,7 @@ def _shape_scalp_cap(chunk, scalp_cy, scalp_rx, scalp_ry, scalp_rz, length,
         # Slight forward lobe over the forehead — brings hair forward so the
         # front edge sits a bit inside the hairline rather than being a
         # perfect arc.
-        fringe = {"buzz": 0.004, "short": 0.010, "medium": 0.014,
+        fringe = {"buzz": 0.004, "short": 0.010, "medium": 0.004,
                   "long": 0.012}.get(style, 0.0)
         v[k, 2] += fringe * length * front * rim
         # Tuck the bottom rim inward toward the skull so the cap's lower
@@ -183,7 +183,7 @@ def build_hair(bones, style: str) -> SkinnedMesh:
     elif style == "medium":
         # More volume than short hair, but the cap still stops above the
         # orbits so it doesn't cover the face.
-        y_cut = (length * (H_HAIRLINE - 0.08) - scalp_cy) / scalp_ry
+        y_cut = (length * (H_HAIRLINE - 0.01) - scalp_cy) / scalp_ry
         rx, ry, rz = scalp_rx * 1.04, scalp_ry * 1.05, scalp_rz * 1.05
         cap = prim.hemisphere_cap(
             (0.0, scalp_cy, -length * 0.01),
@@ -192,8 +192,39 @@ def build_hair(bones, style: str) -> SkinnedMesh:
             rings=12, radial=32,
             y_cutoff=max(-1.3, y_cut),
         )
-        chunks = [_shape_scalp_cap(cap, scalp_cy, rx, ry, rz,
-                                   length, head_w, head_d, "medium")]
+        # Cycle 4 → 5 → 6: medium-hair drape now uses a full ellipsoid
+        # (not a north-cut hemisphere), centred on the head axis, sized
+        # to reach forward of the ear line so face-framing locks read
+        # from the front view. y_cutoff=-1.0 keeps the lower hemisphere
+        # (the actual drape past the jawline) instead of trimming it.
+        # Cycle 7 → 8: lift the drape so its bottom sits at the jawline
+        # instead of past the chin (which made the silhouette read like
+        # a beard). cy is now well above the scalp center; ry stays
+        # modest. The drape still wraps the temples laterally so the
+        # face is framed from the front view.
+        # Cycle 58: reduce helmet arc on medium-hair drape — less lateral
+        # mass (drape_rx shrinks so it doesn't read as beard volume past
+        # the temples) and more front-to-back depth so the layered hair
+        # silhouette has volume back-to-front instead of side-to-side.
+        # Lift drape_cy slightly so the bottom edge breaks at the jawline
+        # cleanly, leaving the cheekbones visible.
+        drape_cy = length * 0.46
+        drape_rx = scalp_rx * 1.08
+        drape_ry = length * 0.38
+        drape_rz = scalp_rz * 1.22
+        drape = prim.hemisphere_cap(
+            (0.0, drape_cy, 0.0),
+            (drape_rx, drape_ry, drape_rz),
+            head_idx, parent,
+            rings=12, radial=36, y_cutoff=-1.0,
+        )
+        drape = _shape_drape(drape, drape_cy, drape_ry, drape_rx,
+                             length, head_d)
+        chunks = [
+            _shape_scalp_cap(cap, scalp_cy, rx, ry, rz,
+                             length, head_w, head_d, "medium"),
+            drape,
+        ]
         chunks.extend(_hairline_cards(head_idx, parent, length, head_w, head_d, style))
     elif style == "long":
         # Scalp cap + drape flowing down past the shoulders. The drape's
