@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "Cython>=3.0", "numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "human"
+version = "0.1.0"
+description = "Parametric human body generator — C core + Cython + Python renderer"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "moderngl>=5.10",
+    "glfw>=2.7",
+    "imgui-bundle>=1.5",
+]
+
+[project.scripts]
+human = "app.main:main"
+
+[tool.setuptools]
+packages = ["app", "bindings"]

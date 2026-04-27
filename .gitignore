@@ -3,25 +3,31 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-screenshot.png
-iter*.png
-scr*.png
-anim_*.png
-screenshot_*.png
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 *.swp
+
+# v2 build artifacts
+build/
+dist/
+*.so
+*.o
+*.a
+bindings/human.c
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+
+# v1 carry-over: validated reference outputs we want to keep, scratch we don't
+screenshot.png
+iter*.png
+scr*.png
+anim_*.png
+screenshot_*.png
 screenshots/baseline/
 screenshots/cycle*/
 screenshots/facial_detail*/
 screenshots/facial_structure*/
 screenshots/wrinkle_*/
-
-# Optional animation packs fetched via tools/download_animations.py.
-# Each is hundreds of MB with attribution-required licenses; see the
-# pack's SOURCE_README.md after download.
-animations/bandai2/
-animations/100style/
-animations/cmu/
