@@ -30,7 +30,11 @@ See `core/human.h`. ~20 functions covering load, evaluate, vertex/index buffer a
 1. **Scaffold** ✅ — directory tree, stub C lib, Cython binding, build files.
 2. **Math + I/O** ✅ — `hmath.{c,h}` (vec3/mat4 + general inverse), `.hmesh` reader/writer in `io.c`, C unit tests in `core/tests/test_engine.c`.
 3. **First render** ✅ — Cython exposes vertex buffer via NumPy zero-copy (NPY_FLOAT32 view). `app/render.py` does offscreen moderngl Lambert shading; `human triview` CLI produces a 3-up grid.
-4. **Offline pipeline (one archetype)** 🟡 scaffolded — `tools/basemesh/{archetypes,gen_reference,gen_mesh,cleanup,bake_hmesh}.py`. Stage 1 prints prompts (operator runs `nano-banana-pro` skill). Stage 2 SSHes to bender. Stages 3-4 are documented stubs to be filled when first raw GLB lands.
+4. **Offline pipeline (one archetype)** 🟡 partial:
+   - Stage 1 (text→reference image): scaffolded as `gen_reference.py`. **Open question:** which backend? v1 memory says we moved AI image gen off paid APIs (Nano Banana Pro replaced by FLUX.1 Kontext on bender) for the triview Stage B, but Kontext is image *editing* not text-to-image. Stage 1 needs a text-to-image model — candidates: FLUX.1 dev / SDXL on bender (free, slower), or Nano Banana Pro one-time (12 images, then never again).
+   - Stage 2 (image→raw GLB): scaffolded as `gen_mesh.py`, SSHes to bender for Hy3D 2.1.
+   - Stage 3 (cleanup + Mixamo bind): documented stub, requires Blender headless work — lands when first raw GLB exists.
+   - Stage 4 (bake) ✅ **implemented** — `bake_hmesh.py` ingests a GLB via pygltflib and calls the new `human_create_from_arrays` C entry point. Naive mode (single root bone) works on any GLB; rigged mode (skin + JOINTS_0/WEIGHTS_0 + IBM→bind_local reconstruction) is stubbed for the cleanup output. Validated against `screenshots/triview/c10.glb` (584k-vert Hy3D output) → renders correctly through the offscreen pipeline.
 5. **Skeleton + LBS** ✅ — `skeleton.c` resolves bind world from local + parent chain, computes skin palette per evaluate. `skin.c` does 4-influence LBS with normal renormalization. Validated by the proto archetype (3 bones, smooth weights along Y).
 6. **Remaining 5 archetypes** ⏳ blocked on phase 4.
 7. **Parameter system** ✅ — `param_t` registry in `internal.h`, dispatch in `human_evaluate`. `HUMAN_PARAM_BONE_SCALE_Y` (drives the proto's `height`) and `HUMAN_PARAM_MORPH` (drives `weight`/`head_size`). UI consumes `human_param_range` for slider bounds.

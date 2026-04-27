@@ -46,6 +46,34 @@ typedef struct human_s human_t;
 human_status_t human_load(const char* path, human_t** out);
 human_status_t human_save(const human_t* h, const char* path);
 human_status_t human_create_proto(uint32_t archetype_hint, human_t** out);
+
+/*
+ * Build a human_t from flat arrays. Used by the offline bake pipeline.
+ * Optional pointers may be NULL with the following defaults:
+ *   normals       — recomputed from face winding (per-vertex average)
+ *   uvs           — zero
+ *   bone_ids      — all zero (single-bone skin)
+ *   bone_weights  — (1,0,0,0) per vertex
+ *   bind_locals   — identity per bone
+ *   parents       — root for bone 0, -1; required if bone_count > 1
+ * If bone_count == 0, a single identity root bone is created automatically.
+ * The created human has zero morphs and zero parameters; add them later.
+ */
+human_status_t human_create_from_arrays(
+    uint32_t archetype,
+    uint32_t vertex_count,
+    const float*    positions,     /* 3*vertex_count, required */
+    const float*    normals,       /* 3*vertex_count, optional */
+    const float*    uvs,           /* 2*vertex_count, optional */
+    const uint8_t*  bone_ids,      /* 4*vertex_count, optional */
+    const float*    bone_weights,  /* 4*vertex_count, optional */
+    uint32_t        index_count,
+    const uint32_t* indices,       /* index_count, required */
+    uint32_t        bone_count,
+    const int32_t*  parents,       /* bone_count, optional iff bone_count<=1 */
+    const float*    bind_locals,   /* 16*bone_count column-major, optional */
+    human_t**       out);
+
 void           human_free(human_t* h);
 
 /* ---------- mesh (output buffers, valid after human_evaluate) ---------- */

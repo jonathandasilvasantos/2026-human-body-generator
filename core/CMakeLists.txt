@@ -17,6 +17,7 @@ set(HUMAN_SOURCES
     morph.c
     skin.c
     proto.c
+    builder.c
     io.c
     human.c
 )

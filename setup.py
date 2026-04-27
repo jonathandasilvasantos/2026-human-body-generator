@@ -13,6 +13,7 @@ core_sources = [
     "core/morph.c",
     "core/skin.c",
     "core/proto.c",
+    "core/builder.c",
     "core/io.c",
     "core/human.c",
 ]

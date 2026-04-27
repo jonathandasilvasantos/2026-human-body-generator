@@ -19,6 +19,20 @@ cdef extern from "human.h":
     human_status_t human_load(const char* path, human_t** out)
     human_status_t human_save(const human_t* h, const char* path)
     human_status_t human_create_proto(uint32_t archetype_hint, human_t** out)
+    human_status_t human_create_from_arrays(
+        uint32_t archetype,
+        uint32_t vertex_count,
+        const float*    positions,
+        const float*    normals,
+        const float*    uvs,
+        const unsigned char*  bone_ids,
+        const float*    bone_weights,
+        uint32_t        index_count,
+        const uint32_t* indices,
+        uint32_t        bone_count,
+        const int32_t*  parents,
+        const float*    bind_locals,
+        human_t**       out)
     void           human_free(human_t* h)
 
     uint32_t        human_vertex_count(const human_t* h)
