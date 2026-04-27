@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v2-c-core]
+  pull_request:
+    branches: [main, v2-c-core]
+
+jobs:
+  c-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ./build/core/test_engine
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Cython>=3.0" "numpy>=1.26" "moderngl>=5.10" "Pillow>=10" pygltflib pytest
+      - name: Build extension
+        run: pip install -e .
+      - name: Run pytest
+        run: |
+          # moderngl needs an OpenGL context — install Mesa software renderer
+          sudo apt-get update -qq
+          sudo apt-get install -y libgl1 libegl1 libgles2 libglx-mesa0
+          python -m pytest tests/ -q

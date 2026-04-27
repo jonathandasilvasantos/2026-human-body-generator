@@ -64,6 +64,61 @@ def _read_accessor(g: GLTF2, idx: int | None) -> np.ndarray | None:
     return out
 
 
+def _quat_to_mat(q: np.ndarray) -> np.ndarray:
+    """glTF stores quaternions as (x, y, z, w). Returns 4x4 column-major rotation."""
+    x, y, z, w = q
+    xx, yy, zz = x*x, y*y, z*z
+    xy, xz, yz = x*y, x*z, y*z
+    wx, wy, wz = w*x, w*y, w*z
+    m = np.eye(4, dtype=np.float32)
+    m[0, 0] = 1 - 2*(yy + zz); m[0, 1] = 2*(xy - wz);     m[0, 2] = 2*(xz + wy)
+    m[1, 0] = 2*(xy + wz);     m[1, 1] = 1 - 2*(xx + zz); m[1, 2] = 2*(yz - wx)
+    m[2, 0] = 2*(xz - wy);     m[2, 1] = 2*(yz + wx);     m[2, 2] = 1 - 2*(xx + yy)
+    return m
+
+
+def _node_local_matrix(node) -> np.ndarray:
+    if node.matrix:
+        # glTF matrices are column-major already
+        m = np.array(node.matrix, dtype=np.float32).reshape(4, 4, order="F")
+        return m
+    t = np.array(node.translation or [0, 0, 0], dtype=np.float32)
+    r = np.array(node.rotation    or [0, 0, 0, 1], dtype=np.float32)
+    s = np.array(node.scale       or [1, 1, 1], dtype=np.float32)
+    R = _quat_to_mat(r)
+    S = np.diag([s[0], s[1], s[2], 1.0]).astype(np.float32)
+    M = R @ S
+    M[0, 3] = t[0]; M[1, 3] = t[1]; M[2, 3] = t[2]
+    return M
+
+
+def _parse_skin(g: GLTF2, skin) -> tuple[np.ndarray, np.ndarray]:
+    """Return (parents int32[N], bind_locals float32[N, 16] column-major)."""
+    joints = list(skin.joints)
+    n = len(joints)
+    node2joint = {nj: i for i, nj in enumerate(joints)}
+    # parent of joint i = node2joint[parent_node(joints[i])] or -1 if outside skin
+    parents = np.full(n, -1, dtype=np.int32)
+    for parent_node_idx, pn in enumerate(g.nodes):
+        if not pn.children:
+            continue
+        for child_node_idx in pn.children:
+            if child_node_idx in node2joint:
+                ji = node2joint[child_node_idx]
+                parents[ji] = node2joint.get(parent_node_idx, -1)
+    # Topo-sort check: parent index must precede child index.
+    for i in range(n):
+        if parents[i] >= i:
+            raise ValueError(f"skin joints not topologically sorted at joint {i} "
+                             f"(parent={parents[i]}); reordering not yet implemented")
+    bind_locals = np.zeros((n, 16), dtype=np.float32)
+    for i, ni in enumerate(joints):
+        m = _node_local_matrix(g.nodes[ni])  # row-major numpy
+        # Flatten column-major for our C engine.
+        bind_locals[i] = m.T.reshape(16)
+    return parents, bind_locals
+
+
 def bake(in_path: Path, out_path: Path, *, rigged: bool, mesh_idx: int = 0, prim_idx: int = 0,
          archetype: int = 0xFF) -> Human:
     g = GLTF2().load(str(in_path))
@@ -95,14 +150,7 @@ def bake(in_path: Path, out_path: Path, *, rigged: bool, mesh_idx: int = 0, prim
             raise ValueError("--rigged requires JOINTS_0/WEIGHTS_0 + skin in the GLB")
         bone_ids = joints.astype(np.uint8)
         bone_weights = weights.astype(np.float32)
-        skin = g.skins[0]
-        ibm = _read_accessor(g, skin.inverseBindMatrices)
-        # Mixamo rigs store inverse-bind-matrices; we want bind_locals.
-        # Reconstruction from IBM + node hierarchy is non-trivial; left for
-        # the proper rigged-bake path that lands with cleanup.py.
-        raise NotImplementedError(
-            "rigged GLB bake: hierarchy/IBM->bind_local reconstruction lands with cleanup.py"
-        )
+        bone_parents, bind_locals = _parse_skin(g, g.skins[0])
 
     h = Human.from_arrays(
         pos, idx,
