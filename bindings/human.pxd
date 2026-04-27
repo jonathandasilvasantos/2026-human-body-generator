@@ -1,4 +1,4 @@
-from libc.stdint cimport uint32_t
+from libc.stdint cimport uint32_t, int32_t
 
 cdef extern from "human.h":
     ctypedef struct human_t
@@ -10,16 +10,31 @@ cdef extern from "human.h":
         HUMAN_ERR_OOM
         HUMAN_ERR_RANGE
 
+    ctypedef enum human_param_kind_t:
+        HUMAN_PARAM_MORPH
+        HUMAN_PARAM_BONE_SCALE_Y
+
+    int HUMAN_ARCH_PROTO
+
     human_status_t human_load(const char* path, human_t** out)
+    human_status_t human_save(const human_t* h, const char* path)
+    human_status_t human_create_proto(uint32_t archetype_hint, human_t** out)
     void           human_free(human_t* h)
 
-    uint32_t       human_vertex_count(const human_t* h)
-    uint32_t       human_index_count(const human_t* h)
-    const float*   human_vertex_buffer(const human_t* h)
+    uint32_t        human_vertex_count(const human_t* h)
+    uint32_t        human_index_count(const human_t* h)
+    const float*    human_vertex_buffer(const human_t* h)
     const uint32_t* human_index_buffer(const human_t* h)
 
-    uint32_t       human_param_count(const human_t* h)
-    human_status_t human_set_param(human_t* h, uint32_t id, float value)
-    float          human_get_param(const human_t* h, uint32_t id)
+    uint32_t        human_bone_count(const human_t* h)
+    const float*    human_bone_world_matrices(const human_t* h)
 
-    human_status_t human_evaluate(human_t* h)
+    uint32_t        human_param_count(const human_t* h)
+    const char*     human_param_name(const human_t* h, uint32_t id)
+    human_param_kind_t human_param_kind(const human_t* h, uint32_t id)
+    human_status_t  human_param_range(const human_t* h, uint32_t id,
+                                      float* lo, float* hi, float* default_val)
+    human_status_t  human_set_param(human_t* h, uint32_t id, float value)
+    float           human_get_param(const human_t* h, uint32_t id)
+
+    human_status_t  human_evaluate(human_t* h)

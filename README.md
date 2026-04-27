@@ -27,4 +27,24 @@ Builds `libhuman.a` and the Cython extension in one step.
 
 ## Status
 
-Phase 1 scaffold. See `notes/v2_rewrite_plan.md` for the staged roadmap.
+Phases 1-3, 5, 7, 8 complete. Engine produces real geometry from a synthetic
+proto archetype. Phases 4 / 6 (offline AI pipeline) are scaffolded — they
+need bender SSH access and Nano Banana Pro quota to execute.
+
+```
+core/         libhuman.a  (C99, no deps beyond libc/libm)
+              math + skeleton + LBS + morph + param dispatch + .hmesh I/O
+              + synthetic proto generator + C unit tests
+bindings/     Cython wrapper, NumPy zero-copy buffer protocol
+app/          offscreen moderngl renderer, CLI: proto / render / triview
+tools/basemesh/   stage 1 prompts ready, stages 2-4 stubbed with clear plan
+tests/        pytest end-to-end (proto, height, weight, roundtrip, normals)
+```
+
+Quick smoke:
+```
+human proto /tmp/p.hmesh
+human triview proto -p height=1.3 -p weight=1.2 --out /tmp/posed.png
+```
+
+See `notes/v2_rewrite_plan.md` for the full roadmap.

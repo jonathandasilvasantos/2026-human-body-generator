@@ -10,6 +10,11 @@ extern "C" {
 
 #define HUMAN_VERSION_MAJOR 0
 #define HUMAN_VERSION_MINOR 1
+#define HUMAN_HMESH_MAGIC   0x48534D48u  /* "HMSH" little-endian */
+#define HUMAN_HMESH_VERSION 1u
+
+#define HUMAN_MAX_NAME      32
+#define HUMAN_MAX_BONE_INFL 4
 
 typedef enum {
     HUMAN_OK = 0,
@@ -27,23 +32,45 @@ typedef enum {
     HUMAN_ARCH_OLD_F   = 4,
     HUMAN_ARCH_OLD_M   = 5,
     HUMAN_ARCH_COUNT   = 6,
+    HUMAN_ARCH_PROTO   = 0xFF,  /* synthetic capsule for testing */
 } human_archetype_t;
+
+typedef enum {
+    HUMAN_PARAM_MORPH        = 0,  /* drives morph weight directly */
+    HUMAN_PARAM_BONE_SCALE_Y = 1,  /* scales target bone along its local Y axis */
+} human_param_kind_t;
 
 typedef struct human_s human_t;
 
+/* ---------- lifecycle ---------- */
 human_status_t human_load(const char* path, human_t** out);
+human_status_t human_save(const human_t* h, const char* path);
+human_status_t human_create_proto(uint32_t archetype_hint, human_t** out);
 void           human_free(human_t* h);
 
-uint32_t       human_vertex_count(const human_t* h);
-uint32_t       human_index_count(const human_t* h);
-const float*   human_vertex_buffer(const human_t* h);
+/* ---------- mesh (output buffers, valid after human_evaluate) ---------- */
+uint32_t        human_vertex_count(const human_t* h);
+uint32_t        human_index_count(const human_t* h);
+/* 8 floats per vertex, interleaved: pos.xyz, norm.xyz, uv.xy */
+const float*    human_vertex_buffer(const human_t* h);
 const uint32_t* human_index_buffer(const human_t* h);
 
-uint32_t       human_param_count(const human_t* h);
-human_status_t human_set_param(human_t* h, uint32_t id, float value);
-float          human_get_param(const human_t* h, uint32_t id);
+/* ---------- skeleton (read-only) ---------- */
+uint32_t        human_bone_count(const human_t* h);
+/* 16 floats per bone, column-major model-space transform after evaluate */
+const float*    human_bone_world_matrices(const human_t* h);
 
-human_status_t human_evaluate(human_t* h);
+/* ---------- parameters ---------- */
+uint32_t            human_param_count(const human_t* h);
+const char*         human_param_name(const human_t* h, uint32_t id);
+human_param_kind_t  human_param_kind(const human_t* h, uint32_t id);
+human_status_t      human_param_range(const human_t* h, uint32_t id,
+                                      float* out_min, float* out_max, float* out_default);
+human_status_t      human_set_param(human_t* h, uint32_t id, float value);
+float               human_get_param(const human_t* h, uint32_t id);
+
+/* ---------- evaluation ---------- */
+human_status_t      human_evaluate(human_t* h);
 
 #ifdef __cplusplus
 }

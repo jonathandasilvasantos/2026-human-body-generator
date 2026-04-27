@@ -27,15 +27,20 @@ morphs   : name[32], delta_count, [vert_idx(u32), dpos(3f), dnormal(3f)]*
 See `core/human.h`. ~20 functions covering load, evaluate, vertex/index buffer access, and parameter set/get.
 
 ## Phase order
-1. **Scaffold** ✅ (this commit) — directory tree, stub C lib, Cython binding, build files.
-2. **Math + I/O** — vec3/mat4/quat in C, `.hmesh` reader/writer, unit tests in C.
-3. **First render** — Cython exposes vertex buffer via NumPy buffer protocol; moderngl draws a hardcoded cube.
-4. **Offline pipeline (one archetype)** — Nano Banana Pro → Hy3D → Blender cleanup → `.hmesh` for adult M.
-5. **Skeleton + LBS** — bind pose render, then linear blend skinning in C.
-6. **Remaining 5 archetypes** through the same pipeline.
-7. **Parameter system** — registry in C, first parameter `height` (bone-scale, no morph). End-to-end UI slider.
-8. **Morphs** — bake belly/limb girth, expose `weight` parameter.
-9. Continue per the parameter roadmap.
+1. **Scaffold** ✅ — directory tree, stub C lib, Cython binding, build files.
+2. **Math + I/O** ✅ — `hmath.{c,h}` (vec3/mat4 + general inverse), `.hmesh` reader/writer in `io.c`, C unit tests in `core/tests/test_engine.c`.
+3. **First render** ✅ — Cython exposes vertex buffer via NumPy zero-copy (NPY_FLOAT32 view). `app/render.py` does offscreen moderngl Lambert shading; `human triview` CLI produces a 3-up grid.
+4. **Offline pipeline (one archetype)** 🟡 scaffolded — `tools/basemesh/{archetypes,gen_reference,gen_mesh,cleanup,bake_hmesh}.py`. Stage 1 prints prompts (operator runs `nano-banana-pro` skill). Stage 2 SSHes to bender. Stages 3-4 are documented stubs to be filled when first raw GLB lands.
+5. **Skeleton + LBS** ✅ — `skeleton.c` resolves bind world from local + parent chain, computes skin palette per evaluate. `skin.c` does 4-influence LBS with normal renormalization. Validated by the proto archetype (3 bones, smooth weights along Y).
+6. **Remaining 5 archetypes** ⏳ blocked on phase 4.
+7. **Parameter system** ✅ — `param_t` registry in `internal.h`, dispatch in `human_evaluate`. `HUMAN_PARAM_BONE_SCALE_Y` (drives the proto's `height`) and `HUMAN_PARAM_MORPH` (drives `weight`/`head_size`). UI consumes `human_param_range` for slider bounds.
+8. **Morphs** ✅ — sparse `(vert_idx, dpos, dnorm)` deltas per morph in `morph.c`, weighted accumulation before skinning. Proto bakes belly + head-cap morphs procedurally to validate the path.
+9. **Continue per the parameter roadmap below** ⏳ — gated on phase 4 producing real archetypes.
+
+## Validated end-to-end on the proto archetype
+- C tests: math inverse, proto build, param clamping, save/load roundtrip → `OK`
+- Python tests (pytest): 7 cases including height growth, weight radial expansion, `.hmesh` save/load equivalence, normals unit-length post-evaluate.
+- Render: `human triview proto -p height=1.3 -p weight=1.2 -p head_size=0.5 --out posed.png` produces a visibly taller, fatter, larger-headed figure than baseline.
 
 ## Parameter roadmap (priority)
 | # | Param | Type | Notes |
